@@ -1,14 +1,18 @@
 """
-╔══════════════════════════════════════════════════════╗
-║          بوت الوظائف الذكي — الإصدار 2.0            ║
-║  Smart Job Bot — Multi-source • AI-powered • SaaS    ║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║         بوت الوظائف الذكي — الإصدار 3.0                ║
+║  Smart Job Bot — Multi-select • Auto-apply • AI Cards   ║
+╚══════════════════════════════════════════════════════════╝
 """
 
-import os, imaplib, email, time, json, threading, logging
+import os, imaplib, email, smtplib, time, json, threading, logging
 import urllib.request, urllib.parse, xml.etree.ElementTree as ET
 from email.header import decode_header
-from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+from datetime import datetime
 import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, MessageHandler,
@@ -23,129 +27,79 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════
-TELEGRAM_TOKEN      = os.environ["TELEGRAM_TOKEN"]
-ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]
-SALLA_WEBHOOK_SECRET = os.environ.get("SALLA_WEBHOOK_SECRET", "")
-DATA_FILE           = "users.json"
+TELEGRAM_TOKEN       = os.environ["TELEGRAM_TOKEN"]
+ANTHROPIC_API_KEY    = os.environ["ANTHROPIC_API_KEY"]
+DATA_FILE            = "users.json"
+CV_DIR               = "/tmp/cvs"
 EMAIL_CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", "300"))
-JOB_SEARCH_INTERVAL  = 6 * 3600   # 6 hours
+JOB_SEARCH_INTERVAL  = 6 * 3600
+
+os.makedirs(CV_DIR, exist_ok=True)
 
 # ── Subscription plans ──────────────────────────────
 PLANS = {
-    "free": {
-        "name":        "🆓 المجاني",
-        "price":       0,
-        "auto_apply":  False,
-        "max_jobs":    0,
-        "description": "يعرض الوظائف المناسبة وتقدم بنفسك"
-    },
-    "basic": {
-        "name":        "⚡ الأساسي",
-        "price":       24,
-        "auto_apply":  True,
-        "max_jobs":    200,
-        "description": "يقدم عنك تلقائياً على 200 وظيفة"
-    },
-    "pro": {
-        "name":        "🚀 المتقدم",
-        "price":       34,
-        "auto_apply":  True,
-        "max_jobs":    500,
-        "description": "يقدم عنك تلقائياً على 500 وظيفة"
-    },
-    "elite": {
-        "name":        "👑 النخبة",
-        "price":       49,
-        "auto_apply":  True,
-        "max_jobs":    1000,
-        "description": "يقدم عنك تلقائياً على 1000 وظيفة"
-    }
+    "free":  {"name": "🆓 المجاني",  "price": 0,  "auto_apply": False, "max_jobs": 0,    "desc": "يعرض الوظائف وتقدم بنفسك"},
+    "basic": {"name": "⚡ الأساسي", "price": 24, "auto_apply": True,  "max_jobs": 200,  "desc": "تقديم تلقائي على 200 وظيفة"},
+    "pro":   {"name": "🚀 المتقدم", "price": 34, "auto_apply": True,  "max_jobs": 500,  "desc": "تقديم تلقائي على 500 وظيفة"},
+    "elite": {"name": "👑 النخبة",  "price": 49, "auto_apply": True,  "max_jobs": 1000, "desc": "تقديم تلقائي على 1000 وظيفة"},
 }
 
-# ── Specializations catalog ─────────────────────────
+# ── Specializations ─────────────────────────────────
 SPECIALIZATIONS = {
-    "tech": {
-        "label": "💻 تقنية المعلومات",
-        "subs":  ["مهندس برمجيات", "مطور ويب", "علم البيانات / AI",
-                  "أمن معلومات", "شبكات وبنية تحتية", "مدير مشاريع تقنية"]
-    },
-    "engineering": {
-        "label": "⚙️ الهندسة",
-        "subs":  ["هندسة مدنية", "هندسة كهربائية", "هندسة ميكانيكية",
-                  "هندسة صناعية", "هندسة كيميائية", "هندسة معمارية"]
-    },
-    "business": {
-        "label": "📊 الأعمال والإدارة",
-        "subs":  ["محاسبة ومالية", "تسويق ومبيعات", "موارد بشرية",
-                  "إدارة سلسلة التوريد", "تطوير أعمال", "إدارة عامة"]
-    },
-    "health": {
-        "label": "🏥 الصحة والطب",
-        "subs":  ["طب بشري", "صيدلة", "تمريض", "علاج طبيعي",
-                  "مختبرات طبية", "إدارة صحية"]
-    },
-    "education": {
-        "label": "🎓 التعليم",
-        "subs":  ["تدريس", "إدارة تربوية", "إرشاد طلابي", "تصميم مناهج"]
-    },
-    "legal": {
-        "label": "⚖️ القانون",
-        "subs":  ["محامي", "مستشار قانوني", "قاضي", "نيابة عامة"]
-    },
-    "media": {
-        "label": "🎨 الإعلام والتصميم",
-        "subs":  ["صحافة وإعلام", "تصميم جرافيك", "تصوير وإنتاج",
-                  "علاقات عامة", "محتوى رقمي"]
-    },
-    "other": {
-        "label": "🔧 أخرى",
-        "subs":  ["خدمة عملاء", "أمن وسلامة", "لوجستيك ونقل",
-                  "سياحة وضيافة", "زراعة وبيئة", "تخصص آخر"]
-    }
+    "tech":        {"label": "💻 تقنية المعلومات", "subs": ["مهندس برمجيات", "مطور ويب", "علم البيانات / AI", "أمن معلومات", "شبكات وبنية تحتية", "مدير مشاريع تقنية"]},
+    "engineering": {"label": "⚙️ الهندسة",          "subs": ["هندسة مدنية", "هندسة كهربائية", "هندسة ميكانيكية", "هندسة صناعية", "هندسة كيميائية", "هندسة معمارية"]},
+    "business":    {"label": "📊 الأعمال والإدارة", "subs": ["محاسبة ومالية", "تسويق ومبيعات", "موارد بشرية", "إدارة سلسلة التوريد", "تطوير أعمال", "إدارة عامة"]},
+    "health":      {"label": "🏥 الصحة والطب",      "subs": ["طب بشري", "صيدلة", "تمريض", "علاج طبيعي", "مختبرات طبية", "إدارة صحية"]},
+    "education":   {"label": "🎓 التعليم",           "subs": ["تدريس", "إدارة تربوية", "إرشاد طلابي", "تصميم مناهج"]},
+    "legal":       {"label": "⚖️ القانون",           "subs": ["محامي", "مستشار قانوني", "قاضي", "نيابة عامة"]},
+    "media":       {"label": "🎨 الإعلام والتصميم", "subs": ["صحافة وإعلام", "تصميم جرافيك", "تصوير وإنتاج", "علاقات عامة", "محتوى رقمي"]},
+    "other":       {"label": "🔧 أخرى",              "subs": ["خدمة عملاء", "أمن وسلامة", "لوجستيك ونقل", "سياحة وضيافة", "زراعة وبيئة"]},
 }
 
-# ── Job search keywords per specialization ───────────
+CITIES = ["الرياض", "جدة", "مكة المكرمة", "المدينة المنورة", "الدمام",
+          "الخبر", "تبوك", "أبها", "حائل", "القصيم", "عن بُعد (Remote)", "أي مدينة"]
+
 SPEC_KEYWORDS = {
-    "مهندس برمجيات":            "software engineer developer",
-    "مطور ويب":                  "web developer frontend backend",
-    "علم البيانات / AI":         "data scientist AI machine learning",
-    "أمن معلومات":               "cybersecurity information security",
-    "شبكات وبنية تحتية":         "network engineer infrastructure",
-    "مدير مشاريع تقنية":         "IT project manager PMP",
-    "هندسة مدنية":               "civil engineer structural",
-    "هندسة كهربائية":            "electrical engineer",
-    "هندسة ميكانيكية":           "mechanical engineer",
-    "هندسة صناعية":              "industrial engineer",
-    "هندسة كيميائية":            "chemical engineer",
-    "هندسة معمارية":             "architect architectural",
-    "محاسبة ومالية":             "accountant finance",
-    "تسويق ومبيعات":             "marketing sales",
-    "موارد بشرية":               "HR human resources",
-    "إدارة سلسلة التوريد":       "supply chain logistics",
-    "تطوير أعمال":               "business development",
-    "إدارة عامة":                "general manager administration",
-    "طب بشري":                   "doctor physician medical",
-    "صيدلة":                     "pharmacist pharmacy",
-    "تمريض":                     "nurse nursing",
-    "علاج طبيعي":                "physiotherapist physical therapy",
-    "مختبرات طبية":              "medical laboratory technician",
-    "إدارة صحية":                "healthcare administration",
-    "تدريس":                     "teacher educator",
-    "إدارة تربوية":              "educational administration principal",
-    "إرشاد طلابي":               "student counselor",
-    "تصميم مناهج":               "curriculum designer instructional",
-    "محامي":                     "lawyer attorney legal",
-    "مستشار قانوني":             "legal counsel advisor",
-    "صحافة وإعلام":              "journalist media",
-    "تصميم جرافيك":              "graphic designer",
-    "تصوير وإنتاج":              "videographer photographer",
-    "علاقات عامة":               "public relations PR",
-    "محتوى رقمي":                "content creator digital marketing",
-    "خدمة عملاء":                "customer service support",
-    "أمن وسلامة":                "security safety officer",
-    "لوجستيك ونقل":              "logistics transportation",
-    "سياحة وضيافة":              "hospitality tourism hotel",
-    "زراعة وبيئة":               "agriculture environment",
+    "مهندس برمجيات": "software engineer developer",
+    "مطور ويب": "web developer frontend backend",
+    "علم البيانات / AI": "data scientist AI machine learning",
+    "أمن معلومات": "cybersecurity information security",
+    "شبكات وبنية تحتية": "network engineer infrastructure",
+    "مدير مشاريع تقنية": "IT project manager",
+    "هندسة مدنية": "civil engineer structural",
+    "هندسة كهربائية": "electrical engineer",
+    "هندسة ميكانيكية": "mechanical engineer",
+    "هندسة صناعية": "industrial engineer",
+    "هندسة كيميائية": "chemical engineer",
+    "هندسة معمارية": "architect architectural",
+    "محاسبة ومالية": "accountant finance",
+    "تسويق ومبيعات": "marketing sales",
+    "موارد بشرية": "HR human resources",
+    "إدارة سلسلة التوريد": "supply chain logistics",
+    "تطوير أعمال": "business development",
+    "إدارة عامة": "general manager administration",
+    "طب بشري": "doctor physician medical",
+    "صيدلة": "pharmacist pharmacy",
+    "تمريض": "nurse nursing",
+    "علاج طبيعي": "physiotherapist physical therapy",
+    "مختبرات طبية": "medical laboratory technician",
+    "إدارة صحية": "healthcare administration",
+    "تدريس": "teacher educator",
+    "إدارة تربوية": "educational administration",
+    "إرشاد طلابي": "student counselor",
+    "تصميم مناهج": "curriculum designer",
+    "محامي": "lawyer attorney legal",
+    "مستشار قانوني": "legal counsel advisor",
+    "صحافة وإعلام": "journalist media",
+    "تصميم جرافيك": "graphic designer",
+    "تصوير وإنتاج": "videographer photographer",
+    "علاقات عامة": "public relations PR",
+    "محتوى رقمي": "content creator digital marketing",
+    "خدمة عملاء": "customer service support",
+    "أمن وسلامة": "security safety officer",
+    "لوجستيك ونقل": "logistics transportation",
+    "سياحة وضيافة": "hospitality tourism hotel",
+    "زراعة وبيئة": "agriculture environment",
 }
 
 # ══════════════════════════════════════════════════════
@@ -162,8 +116,7 @@ def save_data(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_user(chat_id: str) -> dict:
-    data = load_data()
-    return data.get(str(chat_id), {})
+    return load_data().get(str(chat_id), {})
 
 def update_user(chat_id: str, fields: dict):
     data = load_data()
@@ -173,27 +126,12 @@ def update_user(chat_id: str, fields: dict):
     data[uid].update(fields)
     save_data(data)
 
-user_data = load_data()
-
 # ══════════════════════════════════════════════════════
 #  AI CLIENT
 # ══════════════════════════════════════════════════════
 ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-def ai_json(prompt: str, max_tokens: int = 300) -> dict | None:
-    try:
-        r    = ai.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = r.content[0].text.strip().replace("```json","").replace("```","").strip()
-        return json.loads(text)
-    except Exception as e:
-        logger.error(f"AI error: {e}")
-        return None
-
-def ai_text(prompt: str, max_tokens: int = 400) -> str:
+def ai_call(prompt: str, max_tokens: int = 500) -> str:
     try:
         r = ai.messages.create(
             model="claude-sonnet-4-20250514",
@@ -202,245 +140,307 @@ def ai_text(prompt: str, max_tokens: int = 400) -> str:
         )
         return r.content[0].text.strip()
     except Exception as e:
-        logger.error(f"AI text error: {e}")
+        logger.error(f"AI error: {e}")
         return ""
+
+def ai_json(prompt: str, max_tokens: int = 400) -> dict | None:
+    text = ai_call(prompt, max_tokens)
+    try:
+        text = text.replace("```json","").replace("```","").strip()
+        return json.loads(text)
+    except:
+        return None
 
 # ══════════════════════════════════════════════════════
 #  JOB SOURCES
 # ══════════════════════════════════════════════════════
-def fetch_jadarat(keywords: str) -> list[dict]:
+def fetch_rss(url: str, source: str) -> list[dict]:
     jobs = []
     try:
-        q   = urllib.parse.quote(keywords)
-        url = f"https://jadarat.sa/api/v1/jobs?q={q}&page=1&per_page=15"
-        req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0","Accept":"application/json"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
-            data  = json.loads(resp.read().decode("utf-8"))
-            items = data.get("data", data.get("jobs", data.get("results", [])))
-            for item in (items if isinstance(items, list) else [])[:15]:
-                title = item.get("title") or item.get("job_title") or item.get("name","")
-                if title:
-                    jobs.append({
-                        "title":    title,
-                        "company":  item.get("company") or item.get("employer",""),
-                        "location": item.get("location") or item.get("city","الرياض"),
-                        "link":     item.get("url") or item.get("link","https://jadarat.sa"),
-                        "desc":     item.get("description","")[:400],
-                        "source":   "جدارات 🇸🇦"
-                    })
-    except Exception as e:
-        logger.warning(f"Jadarat: {e}")
-    return jobs
-
-def fetch_rss(url: str, source: str, location: str = "السعودية") -> list[dict]:
-    jobs = []
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            root = ET.fromstring(resp.read().decode("utf-8"))
+            root = ET.fromstring(resp.read().decode("utf-8", errors="replace"))
         for item in root.findall(".//item")[:15]:
-            title = item.findtext("title","")
+            title = item.findtext("title", "")
             if title:
                 jobs.append({
-                    "title":    title,
-                    "company":  item.findtext("source", item.findtext("author","")),
-                    "location": location,
-                    "link":     item.findtext("link",""),
-                    "desc":     item.findtext("description","")[:400],
-                    "source":   source
+                    "title":   title,
+                    "company": item.findtext("source", item.findtext("author", "")),
+                    "link":    item.findtext("link", ""),
+                    "desc":    item.findtext("description", "")[:500],
+                    "source":  source
                 })
     except Exception as e:
         logger.warning(f"RSS {source}: {e}")
     return jobs
 
-def fetch_indeed(keywords: str) -> list[dict]:
-    q   = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://www.indeed.com/rss?q={q}&l=Saudi+Arabia&sort=date",
-        "Indeed 🌐", "السعودية"
-    )
+def fetch_jadarat(kw: str) -> list[dict]:
+    jobs = []
+    try:
+        q   = urllib.parse.quote(kw)
+        url = f"https://jadarat.sa/api/v1/jobs?q={q}&page=1&per_page=15"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data  = json.loads(resp.read().decode("utf-8"))
+            items = data.get("data", data.get("jobs", data.get("results", [])))
+            for item in (items if isinstance(items, list) else [])[:15]:
+                title = item.get("title") or item.get("job_title") or item.get("name", "")
+                email_apply = item.get("apply_email") or item.get("email", "")
+                if title:
+                    jobs.append({
+                        "title":        title,
+                        "company":      item.get("company") or item.get("employer", ""),
+                        "location":     item.get("location") or item.get("city", ""),
+                        "link":         item.get("url") or item.get("link", "https://jadarat.sa"),
+                        "desc":         item.get("description", "")[:500],
+                        "email_apply":  email_apply,
+                        "source":       "جدارات 🇸🇦"
+                    })
+    except Exception as e:
+        logger.warning(f"Jadarat: {e}")
+    return jobs
 
-def fetch_bayt(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords.replace(" ","-"))
-    return fetch_rss(
-        f"https://www.bayt.com/en/international/jobs/{q}-jobs/?rss=1",
-        "Bayt 💼", "السعودية"
-    )
-
-def fetch_gulftalent(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://www.gulftalent.com/saudi-arabia/jobs/rss?q={q}",
-        "GulfTalent 🌟", "السعودية"
-    )
-
-def fetch_naukrigulf(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://www.naukrigulf.com/rss/jobs-in-saudi-arabia?q={q}",
-        "Naukrigulf 📋", "السعودية"
-    )
-
-def fetch_linkedin_rss(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://www.linkedin.com/jobs/search/?keywords={q}&location=Saudi+Arabia&f_TPR=r86400&format=rss",
-        "LinkedIn 🔵", "السعودية"
-    )
-
-def fetch_glassdoor(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={q}&locT=N&locId=140&format=rss",
-        "Glassdoor 🏢", "السعودية"
-    )
-
-def fetch_tanqeeb(keywords: str) -> list[dict]:
-    q = urllib.parse.quote(keywords)
-    return fetch_rss(
-        f"https://tanqeeb.com/sa/jobs/rss?q={q}",
-        "Tanqeeb 🇸🇦", "السعودية"
-    )
-
-def fetch_all_sources(keywords: str) -> list[dict]:
-    """Fetch from ALL sources concurrently."""
-    all_jobs = []
-    results  = {}
-
-    def run(name, fn, kw):
+def fetch_all(keywords: str) -> list[dict]:
+    results = {}
+    def run(name, fn):
         try:
-            results[name] = fn(kw)
+            results[name] = fn()
         except:
             results[name] = []
 
-    threads = [
-        threading.Thread(target=run, args=("jadarat",    fetch_jadarat,    keywords)),
-        threading.Thread(target=run, args=("indeed",     fetch_indeed,     keywords)),
-        threading.Thread(target=run, args=("bayt",       fetch_bayt,       keywords)),
-        threading.Thread(target=run, args=("gulftalent", fetch_gulftalent, keywords)),
-        threading.Thread(target=run, args=("naukrigulf", fetch_naukrigulf, keywords)),
-        threading.Thread(target=run, args=("linkedin",   fetch_linkedin_rss, keywords)),
-        threading.Thread(target=run, args=("glassdoor",  fetch_glassdoor,  keywords)),
-        threading.Thread(target=run, args=("tanqeeb",    fetch_tanqeeb,    keywords)),
-    ]
+    q = urllib.parse.quote(keywords)
+    tasks = {
+        "jadarat":    lambda: fetch_jadarat(keywords),
+        "indeed":     lambda: fetch_rss(f"https://www.indeed.com/rss?q={q}&l=Saudi+Arabia&sort=date", "Indeed 🌐"),
+        "bayt":       lambda: fetch_rss(f"https://www.bayt.com/en/international/jobs/{urllib.parse.quote(keywords.replace(' ','-'))}-jobs/?rss=1", "Bayt 💼"),
+        "gulftalent": lambda: fetch_rss(f"https://www.gulftalent.com/saudi-arabia/jobs/rss?q={q}", "GulfTalent 🌟"),
+        "naukrigulf": lambda: fetch_rss(f"https://www.naukrigulf.com/rss/jobs-in-saudi-arabia?q={q}", "Naukrigulf 📋"),
+        "linkedin":   lambda: fetch_rss(f"https://www.linkedin.com/jobs/search/?keywords={q}&location=Saudi+Arabia&f_TPR=r86400&format=rss", "LinkedIn 🔵"),
+        "glassdoor":  lambda: fetch_rss(f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={q}&locT=N&locId=140&format=rss", "Glassdoor 🏢"),
+        "tanqeeb":    lambda: fetch_rss(f"https://tanqeeb.com/sa/jobs/rss?q={q}", "Tanqeeb 🇸🇦"),
+    }
+    threads = [threading.Thread(target=run, args=(n, f), daemon=True) for n, f in tasks.items()]
     for t in threads: t.start()
     for t in threads: t.join(timeout=20)
 
+    all_jobs, seen = [], set()
     for jobs in results.values():
-        all_jobs.extend(jobs)
-
-    # Deduplicate by title+company
-    seen, unique = set(), []
-    for j in all_jobs:
-        key = f"{j['title'].lower().strip()}|{j.get('company','').lower().strip()}"
-        if key not in seen:
-            seen.add(key)
-            unique.append(j)
-
-    return unique
+        for j in jobs:
+            key = f"{j.get('title','').lower().strip()}|{j.get('company','').lower().strip()}"
+            if key not in seen:
+                seen.add(key)
+                all_jobs.append(j)
+    return all_jobs
 
 # ══════════════════════════════════════════════════════
-#  AI JOB MATCHING
+#  AI JOB ANALYSIS
 # ══════════════════════════════════════════════════════
-def match_job(job: dict, profile: dict) -> dict | None:
-    spec     = profile.get("specialization","")
-    exp      = profile.get("experience","")
-    edu      = profile.get("education","")
-    city     = profile.get("city","")
-    result   = ai_json(f"""
-ملف المستخدم:
-- التخصص: {spec}
-- المؤهل: {edu}
-- الخبرة: {exp} سنوات
-- المدينة: {city}
+def analyze_job(job: dict, profile: dict) -> dict | None:
+    """Full AI analysis: match + card + apply method."""
+    specs  = ", ".join(profile.get("specializations", []))
+    cities = ", ".join(profile.get("cities", []))
+    result = ai_json(f"""
+أنت خبير توظيف. حلّل هذه الوظيفة بدقة.
 
-الوظيفة:
+ملف المتقدم:
+- التخصصات: {specs}
+- المؤهل: {profile.get('education','')}
+- الخبرة: {profile.get('experience','')}
+- المدن المفضلة: {cities}
+
+بيانات الوظيفة:
 - المسمى: {job.get('title','')}
 - الشركة: {job.get('company','')}
-- الموقع: {job.get('location','')}
-- الوصف: {job.get('desc','')}
+- الموقع: {job.get('location', job.get('source',''))}
+- الوصف: {job.get('desc','لا يوجد')}
+- الرابط: {job.get('link','')}
 
-هل هذه الوظيفة مناسبة لهذا الشخص؟
-JSON فقط بلا أي نص خارجه:
-{{"match": true/false, "reason": "جملة واحدة بالعربية توضح السبب", "score": 1-10}}
-""", max_tokens=150)
-    if result and result.get("match") and result.get("score",0) >= 6:
+المطلوب - أجب بـ JSON فقط:
+{{
+  "match": true/false,
+  "score": 1-10,
+  "reason": "جملة واحدة لماذا مناسبة",
+  "job_title_clean": "المسمى الوظيفي المنظّف",
+  "company_summary": "نبذة قصيرة عن الشركة أو مجالها",
+  "requirements": ["متطلب 1", "متطلب 2", "متطلب 3"],
+  "work_type": "حضوري/عن بعد/هجين/غير محدد",
+  "salary": "الراتب إن وُجد أو غير محدد",
+  "apply_method": "email/website/form",
+  "apply_email": "الإيميل إن وُجد في الوصف أو فارغ",
+  "deadline": "آخر موعد إن وُجد أو غير محدد"
+}}
+""", max_tokens=600)
+    if result and result.get("match") and result.get("score", 0) >= 6:
         return result
     return None
 
-def analyze_email_job(em: dict, profile: dict) -> dict | None:
-    result = ai_json(f"""
-ملف المستخدم: التخصص: {profile.get('specialization','')}, الخبرة: {profile.get('experience','')} سنوات
-المرسل: {em['sender']}
-الموضوع: {em['subject']}
-المحتوى: {em['body'][:1500]}
+def generate_cover_letter(job: dict, analysis: dict, profile: dict, user_name: str) -> str:
+    """Generate a professional Arabic cover letter."""
+    specs = ", ".join(profile.get("specializations", []))
+    return ai_call(f"""
+اكتب خطاب تقديم وظيفي احترافي باللغة العربية للمعلومات التالية:
 
-JSON فقط:
-{{"is_job": true/false, "relevance": "نعم/لا/جزئياً", "summary": "ملخص قصير", "score": 1-10}}
-""")
-    return result if result and result.get("is_job") else None
+المتقدم: {user_name}
+تخصصه: {specs}
+مؤهله: {profile.get('education','')}
+خبرته: {profile.get('experience','')}
+
+الوظيفة: {analysis.get('job_title_clean', job.get('title',''))}
+الشركة: {job.get('company','')}
+متطلبات الوظيفة: {', '.join(analysis.get('requirements', []))}
+
+الخطاب يجب أن:
+- يكون رسمياً واحترافياً
+- يبدأ بالتحية المناسبة
+- يذكر اسم الوظيفة والشركة
+- يبرز مهارات المتقدم المناسبة
+- يُعبّر عن الاهتمام والحماس
+- ينتهي بشكر وترقب الرد
+- لا يزيد عن 200 كلمة
+""", max_tokens=600)
+
+def classify_apply_method(job: dict, analysis: dict) -> tuple[str, str]:
+    """Returns (method, target) where method is 'email' or 'website'."""
+    apply_email = analysis.get("apply_email", "") or job.get("email_apply", "")
+    method      = analysis.get("apply_method", "website")
+    if apply_email and "@" in apply_email:
+        return "email", apply_email
+    if method == "email":
+        return "website", job.get("link", "")
+    return "website", job.get("link", "")
+
+# ══════════════════════════════════════════════════════
+#  AUTO EMAIL APPLY
+# ══════════════════════════════════════════════════════
+def send_application_email(
+    from_gmail: str, app_password: str,
+    to_email: str, job_title: str, company: str,
+    cover_letter: str, cv_path: str | None, applicant_name: str
+) -> bool:
+    """Send application email with cover letter and CV attachment."""
+    try:
+        msg = MIMEMultipart()
+        msg["From"]    = f"{applicant_name} <{from_gmail}>"
+        msg["To"]      = to_email
+        msg["Subject"] = f"طلب توظيف — {job_title} | {company}"
+
+        # Body
+        body = f"{cover_letter}\n\n---\n{applicant_name}\n{from_gmail}"
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        # Attach CV if exists
+        if cv_path and os.path.exists(cv_path):
+            with open(cv_path, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f'attachment; filename="CV_{applicant_name}.pdf"')
+            msg.attach(part)
+
+        # Send
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(from_gmail, app_password)
+        server.sendmail(from_gmail, to_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        logger.error(f"Email send error: {e}")
+        return False
 
 # ══════════════════════════════════════════════════════
 #  JOB SEARCH ENGINE
 # ══════════════════════════════════════════════════════
+def format_job_card(job: dict, analysis: dict, apply_method: str, apply_target: str) -> str:
+    """Format a beautiful job card message."""
+    stars      = "⭐" * min(int(analysis.get("score", 0)), 10)
+    reqs       = analysis.get("requirements", [])
+    reqs_text  = "\n".join(f"   • {r}" for r in reqs[:4]) if reqs else "   • غير محدد"
+    work_badge = {"حضوري": "🏢", "عن بعد": "🏠", "هجين": "🔄"}.get(analysis.get("work_type",""), "📍")
+
+    if apply_method == "email":
+        apply_line = f"📧 *طريقة التقديم:* بالإيميل — سيقدم عنك البوت تلقائياً ✅"
+    else:
+        apply_line = f"🔗 *طريقة التقديم:* [اضغط هنا للتقديم]({apply_target})"
+
+    return (
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💼 *{analysis.get('job_title_clean', job.get('title',''))}*\n"
+        f"🏢 {job.get('company','غير محدد')}  |  {work_badge} {analysis.get('work_type','غير محدد')}\n"
+        f"📍 {job.get('location', 'غير محدد')}  |  📡 {job.get('source','')}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏛️ *عن الشركة:*\n   {analysis.get('company_summary','غير متوفر')}\n\n"
+        f"📋 *المتطلبات:*\n{reqs_text}\n\n"
+        f"💰 *الراتب:* {analysis.get('salary','غير محدد')}\n"
+        f"⏰ *آخر موعد:* {analysis.get('deadline','غير محدد')}\n\n"
+        f"✨ *سبب الترشيح:* {analysis.get('reason','')}\n"
+        f"📊 *الملاءمة:* {stars} ({analysis.get('score',0)}/10)\n\n"
+        f"{apply_line}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
 def run_job_search(chat_id: str, app, manual: bool = False):
     user    = get_user(chat_id)
     profile = user.get("profile", {})
-    spec    = profile.get("specialization","")
-    if not spec:
+    specs   = profile.get("specializations", [])
+    if not specs:
         return 0
 
-    keywords  = SPEC_KEYWORDS.get(spec, spec)
-    seen_jobs = set(user.get("seen_jobs",[]))
-    plan_key  = user.get("plan","free")
+    plan_key  = user.get("plan", "free")
     plan      = PLANS.get(plan_key, PLANS["free"])
     applied   = user.get("applied_count", 0)
+    seen_jobs = set(user.get("seen_jobs", []))
     found     = 0
 
-    all_jobs = fetch_all_sources(keywords)
-    logger.info(f"🔍 Found {len(all_jobs)} raw jobs for {spec}")
+    # Build keywords from all selected specializations
+    all_keywords = " ".join(SPEC_KEYWORDS.get(s, s) for s in specs[:3])
+
+    all_jobs = fetch_all(all_keywords)
+    logger.info(f"🔍 {len(all_jobs)} raw jobs for {chat_id}")
+
+    gmail       = user.get("gmail", "")
+    app_pwd     = user.get("app_password", "")
+    cv_path     = user.get("cv_path", "")
+    user_name   = user.get("name", "المتقدم")
+    can_apply   = plan["auto_apply"] and gmail and app_pwd and applied < plan["max_jobs"]
 
     for job in all_jobs:
-        job_id = f"{job['title'].lower()}|{job.get('company','').lower()}"
+        job_id = f"{job.get('title','').lower()}|{job.get('company','').lower()}"
         if job_id in seen_jobs:
             continue
         seen_jobs.add(job_id)
 
-        result = match_job(job, profile)
-        if not result:
+        analysis = analyze_job(job, profile)
+        if not analysis:
             continue
 
-        stars = "⭐" * min(int(result.get("score",0)), 10)
+        apply_method, apply_target = classify_apply_method(job, analysis)
+        card = format_job_card(job, analysis, apply_method, apply_target)
+
+        # Auto-apply by email if eligible
         auto_applied = False
+        if can_apply and apply_method == "email" and apply_target:
+            cover = generate_cover_letter(job, analysis, profile, user_name)
+            ok    = send_application_email(
+                gmail, app_pwd, apply_target,
+                analysis.get("job_title_clean", job.get("title","")),
+                job.get("company",""),
+                cover, cv_path if os.path.exists(cv_path or "") else None,
+                user_name
+            )
+            if ok:
+                auto_applied = True
+                applied += 1
+                card += f"\n\n🤖 *تم إرسال طلب التقديم بالإيميل عنك!*"
 
-        # Auto-apply if subscribed and quota remains
-        if plan["auto_apply"] and applied < plan["max_jobs"]:
-            auto_applied = True
-            applied += 1
-
-        apply_badge = "✅ *تم التقديم تلقائياً عنك!*\n" if auto_applied else "👆 *اضغط الرابط للتقديم يدوياً*\n"
-
-        msg = (
-            f"{'🤖' if auto_applied else '🔍'} *وظيفة مناسبة — {job['source']}*\n"
-            f"{'─' * 30}\n"
-            f"💼 *المسمى:* {job['title']}\n"
-            f"🏢 *الشركة:* {job.get('company','غير محدد')}\n"
-            f"📍 *الموقع:* {job.get('location','غير محدد')}\n\n"
-            f"✨ *السبب:* {result['reason']}\n"
-            f"📊 *الملاءمة:* {stars} ({result['score']}/10)\n\n"
-            f"{apply_badge}"
-            f"🔗 [اضغط هنا]({job.get('link','#')})"
-        )
         try:
             app.bot.send_message(
-                chat_id=int(chat_id), text=msg,
+                chat_id=int(chat_id), text=card,
                 parse_mode="Markdown", disable_web_page_preview=False
             )
             found += 1
         except Exception as e:
             logger.error(f"Send error: {e}")
 
-    # Save state
     update_user(chat_id, {
         "seen_jobs":       list(seen_jobs)[-1000:],
         "last_job_search": time.time(),
@@ -455,12 +455,12 @@ def run_job_search(chat_id: str, app, manual: bool = False):
                     "🔍 *نتيجة البحث*\n\n"
                     "بحثت في 8 مصادر (جدارات، Indeed، Bayt، LinkedIn، GulfTalent، Naukrigulf، Glassdoor، Tanqeeb)\n\n"
                     "ما وجدت وظائف جديدة مناسبة الآن.\n"
-                    "سأبحث تلقائياً بعد 6 ساعات 🕐"
+                    "⏰ سأبحث تلقائياً بعد 6 ساعات."
                 ),
                 parse_mode="Markdown"
             )
-        except: pass
-
+        except:
+            pass
     return found
 
 # ══════════════════════════════════════════════════════
@@ -470,55 +470,60 @@ def job_search_loop(app):
     time.sleep(90)
     while True:
         data = load_data()
-        for chat_id, info in data.items():
-            if not info.get("profile", {}).get("specialization"):
-                continue
-            if time.time() - info.get("last_job_search", 0) >= JOB_SEARCH_INTERVAL:
-                logger.info(f"⏰ Auto search for {chat_id}")
-                run_job_search(chat_id, app)
+        for cid, info in data.items():
+            if info.get("profile", {}).get("specializations"):
+                if time.time() - info.get("last_job_search", 0) >= JOB_SEARCH_INTERVAL:
+                    logger.info(f"⏰ Auto search: {cid}")
+                    run_job_search(cid, app)
         time.sleep(1800)
 
 def email_monitor_loop(app):
     while True:
         data = load_data()
-        for chat_id, info in data.items():
-            gmail = info.get("gmail")
-            pwd   = info.get("app_password")
-            prof  = info.get("profile",{})
-            if not gmail or not pwd or not prof.get("specialization"):
+        for cid, info in data.items():
+            if not info.get("gmail") or not info.get("app_password"):
+                continue
+            if not info.get("profile", {}).get("specializations"):
                 continue
             try:
-                mails = _fetch_emails(gmail, pwd, info.get("last_uid"))
+                mails = _fetch_imap(info["gmail"], info["app_password"], info.get("last_uid"))
                 for em in mails:
-                    result = analyze_email_job(em, prof)
-                    if result:
-                        stars = "⭐" * min(int(result.get("score",0)), 10)
-                        msg = (
-                            f"📬 *إيميل وظيفة جديد!*\n"
-                            f"{'─'*30}\n"
-                            f"📧 {em['sender'][:50]}\n"
-                            f"📌 {em['subject']}\n\n"
-                            f"📝 {result['summary']}\n\n"
-                            f"📊 الملاءمة: {result['relevance']} {stars} ({result['score']}/10)"
+                    result = ai_json(
+                        f"السيرة: {info.get('profile',{})}\n"
+                        f"المرسل: {em['sender']}\nالموضوع: {em['subject']}\n"
+                        f"المحتوى: {em['body'][:1200]}\n"
+                        f"JSON فقط: {{\"is_job\":true/false,\"summary\":\"ملخص\",\"score\":1-10}}"
+                    )
+                    if result and result.get("is_job") and result.get("score", 0) >= 6:
+                        stars = "⭐" * min(int(result.get("score", 0)), 10)
+                        app.bot.send_message(
+                            chat_id=int(cid),
+                            text=(
+                                f"📬 *إيميل وظيفة جديد!*\n\n"
+                                f"📧 {em['sender'][:50]}\n"
+                                f"📌 {em['subject']}\n\n"
+                                f"📝 {result['summary']}\n"
+                                f"📊 {stars} ({result['score']}/10)"
+                            ),
+                            parse_mode="Markdown"
                         )
-                        app.bot.send_message(chat_id=int(chat_id), text=msg, parse_mode="Markdown")
                     if em["uid"]:
-                        uid_int = int(em["uid"])
-                        if not info.get("last_uid") or uid_int > int(info.get("last_uid",0)):
-                            data[chat_id]["last_uid"] = em["uid"]
+                        uid_i = int(em["uid"])
+                        if not info.get("last_uid") or uid_i > int(info.get("last_uid", 0)):
+                            data[cid]["last_uid"] = em["uid"]
                 save_data(data)
             except Exception as e:
-                logger.error(f"Email monitor {chat_id}: {e}")
+                logger.error(f"Email loop {cid}: {e}")
         time.sleep(EMAIL_CHECK_INTERVAL)
 
-def _decode(s):
+def _dstr(s):
     if not s: return ""
-    parts, out = decode_header(s), []
-    for p, enc in parts:
-        out.append(p.decode(enc or "utf-8", errors="replace") if isinstance(p,bytes) else str(p))
+    out = []
+    for p, enc in decode_header(s):
+        out.append(p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else str(p))
     return " ".join(out)
 
-def _fetch_emails(gmail, pwd, last_uid) -> list[dict]:
+def _fetch_imap(gmail, pwd, last_uid) -> list[dict]:
     mails = []
     try:
         m = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -541,8 +546,8 @@ def _fetch_emails(gmail, pwd, last_uid) -> list[dict]:
                         break
             else:
                 body = msg.get_payload(decode=True).decode("utf-8", errors="replace")[:2000]
-            mails.append({"uid": uid.decode(), "subject": _decode(msg.get("Subject","")),
-                          "sender": _decode(msg.get("From","")), "body": body})
+            mails.append({"uid": uid.decode(), "subject": _dstr(msg.get("Subject","")),
+                          "sender": _dstr(msg.get("From","")), "body": body})
         m.logout()
     except Exception as e:
         logger.error(f"IMAP: {e}")
@@ -551,55 +556,68 @@ def _fetch_emails(gmail, pwd, last_uid) -> list[dict]:
 # ══════════════════════════════════════════════════════
 #  KEYBOARDS
 # ══════════════════════════════════════════════════════
-def main_menu_kb(has_profile: bool = False) -> InlineKeyboardMarkup:
-    buttons = []
+def main_kb(has_profile: bool) -> InlineKeyboardMarkup:
     if not has_profile:
-        buttons.append([InlineKeyboardButton("📝 إنشاء ملفي الوظيفي", callback_data="onboard_start")])
-    else:
-        buttons += [
-            [InlineKeyboardButton("🔍 ابحث عن وظائف الآن",    callback_data="search_now")],
-            [InlineKeyboardButton("👤 ملفي الوظيفي",           callback_data="view_profile")],
-            [InlineKeyboardButton("💎 الباقات والاشتراكات",    callback_data="show_plans")],
-            [InlineKeyboardButton("📧 ربط Gmail",              callback_data="setup_email")],
-            [InlineKeyboardButton("📊 إحصائياتي",             callback_data="stats")],
-        ]
-    return InlineKeyboardMarkup(buttons)
+        return InlineKeyboardMarkup([[InlineKeyboardButton("📝 إنشاء ملفي الوظيفي", callback_data="ob_start")]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 ابحث عن وظائف الآن",  callback_data="search_now")],
+        [InlineKeyboardButton("👤 ملفي الوظيفي",          callback_data="view_profile")],
+        [InlineKeyboardButton("💎 الباقات والاشتراكات",   callback_data="show_plans")],
+        [InlineKeyboardButton("📧 ربط Gmail وإرسال CV",  callback_data="setup_email")],
+        [InlineKeyboardButton("📊 إحصائياتي",            callback_data="stats")],
+    ])
 
-def spec_categories_kb() -> InlineKeyboardMarkup:
+def multiselect_kb(options: list, selected: list, prefix: str, done_cb: str) -> InlineKeyboardMarkup:
     buttons = []
-    for key, val in SPECIALIZATIONS.items():
-        buttons.append([InlineKeyboardButton(val["label"], callback_data=f"cat_{key}")])
+    for opt in options:
+        check = "✅ " if opt in selected else ""
+        buttons.append([InlineKeyboardButton(f"{check}{opt}", callback_data=f"{prefix}{opt}")])
+    buttons.append([InlineKeyboardButton("✔️ التالي ←", callback_data=done_cb)])
     return InlineKeyboardMarkup(buttons)
 
-def spec_subs_kb(cat_key: str) -> InlineKeyboardMarkup:
-    subs    = SPECIALIZATIONS[cat_key]["subs"]
-    buttons = [[InlineKeyboardButton(s, callback_data=f"spec_{s}")] for s in subs]
-    buttons.append([InlineKeyboardButton("⬅️ رجوع", callback_data="onboard_start")])
+def spec_cats_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(v["label"], callback_data=f"cat_{k}")]
+        for k, v in SPECIALIZATIONS.items()
+    ])
+
+def spec_subs_kb(cat: str, selected: list) -> InlineKeyboardMarkup:
+    subs    = SPECIALIZATIONS[cat]["subs"]
+    buttons = []
+    for s in subs:
+        check = "✅ " if s in selected else ""
+        buttons.append([InlineKeyboardButton(f"{check}{s}", callback_data=f"spec_{s}")])
+    buttons.append([InlineKeyboardButton("✔️ التالي ←", callback_data="spec_done")])
+    buttons.append([InlineKeyboardButton("⬅️ رجوع", callback_data="ob_start")])
+    return InlineKeyboardMarkup(buttons)
+
+def edu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(o, callback_data=f"edu_{o}")]
+        for o in ["ثانوية", "دبلوم", "بكالوريوس", "ماجستير", "دكتوراه"]
+    ])
+
+def exp_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(o, callback_data=f"exp_{o}")]
+        for o in ["أقل من سنة", "1-3 سنوات", "3-5 سنوات", "5-10 سنوات", "أكثر من 10 سنوات"]
+    ])
+
+def cities_kb(selected: list) -> InlineKeyboardMarkup:
+    buttons = []
+    for c in CITIES:
+        check = "✅ " if c in selected else ""
+        buttons.append([InlineKeyboardButton(f"{check}{c}", callback_data=f"city_{c}")])
+    buttons.append([InlineKeyboardButton("✔️ إنشاء الملف ←", callback_data="city_done")])
     return InlineKeyboardMarkup(buttons)
 
 def plans_kb() -> InlineKeyboardMarkup:
-    buttons = []
-    for key, plan in PLANS.items():
-        label = f"{plan['name']} — {plan['price']} ريال" if plan['price'] > 0 else f"{plan['name']} — مجاني"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"plan_{key}")])
-    buttons.append([InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")])
-    return InlineKeyboardMarkup(buttons)
-
-def experience_kb() -> InlineKeyboardMarkup:
-    options = ["أقل من سنة", "1-3 سنوات", "3-5 سنوات", "5-10 سنوات", "أكثر من 10 سنوات"]
-    buttons = [[InlineKeyboardButton(o, callback_data=f"exp_{o}")] for o in options]
-    return InlineKeyboardMarkup(buttons)
-
-def education_kb() -> InlineKeyboardMarkup:
-    options = ["ثانوية", "دبلوم", "بكالوريوس", "ماجستير", "دكتوراه"]
-    buttons = [[InlineKeyboardButton(o, callback_data=f"edu_{o}")] for o in options]
-    return InlineKeyboardMarkup(buttons)
-
-def city_kb() -> InlineKeyboardMarkup:
-    cities  = ["الرياض", "جدة", "مكة المكرمة", "المدينة المنورة", "الدمام",
-               "الخبر", "تبوك", "أبها", "عن بُعد (Remote)", "أي مدينة"]
-    buttons = [[InlineKeyboardButton(c, callback_data=f"city_{c}")] for c in cities]
-    return InlineKeyboardMarkup(buttons)
+    rows = [[InlineKeyboardButton(
+        f"{p['name']} — {'مجاني' if p['price']==0 else str(p['price'])+' ريال'}",
+        callback_data=f"plan_{k}"
+    )] for k, p in PLANS.items()]
+    rows.append([InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")])
+    return InlineKeyboardMarkup(rows)
 
 # ══════════════════════════════════════════════════════
 #  HANDLERS
@@ -607,222 +625,224 @@ def city_kb() -> InlineKeyboardMarkup:
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id     = str(update.effective_chat.id)
     user        = get_user(chat_id)
-    has_profile = bool(user.get("profile",{}).get("specialization"))
+    has_profile = bool(user.get("profile", {}).get("specializations"))
     name        = update.effective_user.first_name or "مرحباً"
 
-    if chat_id not in load_data():
-        update_user(chat_id, {"joined": datetime.now().isoformat()})
+    if not user:
+        update_user(chat_id, {"name": name, "joined": datetime.now().isoformat()})
+    else:
+        update_user(chat_id, {"name": name})
 
-    welcome = (
+    await update.message.reply_text(
         f"👋 أهلاً *{name}*!\n\n"
-        f"🤖 *بوت الوظائف الذكي*\n"
-        f"{'─'*28}\n"
-        f"🔍 يبحث في *8 مصادر* تلقائياً كل 6 ساعات\n"
+        f"🤖 *بوت الوظائف الذكي v3.0*\n"
+        f"{'─'*30}\n"
+        f"🔍 يبحث في *8 مصادر* كل 6 ساعات\n"
         f"🇸🇦 جدارات • Indeed • Bayt • LinkedIn\n"
         f"    GulfTalent • Naukrigulf • Glassdoor • Tanqeeb\n\n"
         f"🤖 يحلل كل وظيفة بالذكاء الاصطناعي\n"
-        f"📬 يراقب إيميلك لفرص العمل\n"
-        f"🚀 يقدم عنك تلقائياً (في الباقات المدفوعة)\n\n"
-        f"{'─'*28}\n"
-        f"{'✅ ملفك الوظيفي جاهز! اختر من القائمة.' if has_profile else '👇 ابدأ بإنشاء ملفك الوظيفي'}"
-    )
-    await update.message.reply_text(
-        welcome,
-        reply_markup=main_menu_kb(has_profile),
+        f"📧 يقدم عنك تلقائياً على وظائف الإيميل\n"
+        f"🔗 يرسل لك رابط الوظائف التي تحتاج موقع\n"
+        f"📋 يكتب خطاب تقديم احترافي لكل وظيفة\n"
+        f"{'─'*30}\n"
+        f"{'✅ ملفك جاهز!' if has_profile else '👇 ابدأ بإنشاء ملفك الوظيفي'}",
+        reply_markup=main_kb(has_profile),
         parse_mode="Markdown"
     )
 
-async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query   = update.callback_query
-    await query.answer()
-    chat_id = str(query.message.chat_id)
-    data    = query.data
+async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q       = update.callback_query
+    await q.answer()
+    chat_id = str(q.message.chat_id)
+    data    = q.data
     user    = get_user(chat_id)
 
     # ── Main menu ────────────────────────────────────
     if data == "main_menu":
-        has_profile = bool(user.get("profile",{}).get("specialization"))
-        await query.message.reply_text(
-            "🏠 القائمة الرئيسية",
-            reply_markup=main_menu_kb(has_profile)
-        )
+        has = bool(user.get("profile", {}).get("specializations"))
+        await q.message.reply_text("🏠 القائمة الرئيسية", reply_markup=main_kb(has))
 
     # ── Onboarding: category ─────────────────────────
-    elif data == "onboard_start":
-        await query.message.reply_text(
-            "📝 *إنشاء ملفك الوظيفي*\n\n"
-            "الخطوة 1/4 — اختر مجالك:",
-            reply_markup=spec_categories_kb(),
-            parse_mode="Markdown"
+    elif data == "ob_start":
+        ctx.user_data["sel_specs"]  = []
+        ctx.user_data["sel_cities"] = []
+        await q.message.reply_text(
+            "📝 *إنشاء ملفك الوظيفي*\n\nالخطوة 1/4 — اختر مجالك:",
+            reply_markup=spec_cats_kb(), parse_mode="Markdown"
         )
 
     elif data.startswith("cat_"):
-        cat_key = data[4:]
-        ctx.user_data["cat"] = cat_key
-        label   = SPECIALIZATIONS[cat_key]["label"]
-        await query.message.reply_text(
-            f"✅ المجال: {label}\n\n"
-            f"الخطوة 2/4 — اختر تخصصك الدقيق:",
-            reply_markup=spec_subs_kb(cat_key),
+        ctx.user_data["cat"]       = data[4:]
+        ctx.user_data["sel_specs"] = ctx.user_data.get("sel_specs", [])
+        label = SPECIALIZATIONS[data[4:]]["label"]
+        await q.message.reply_text(
+            f"✅ المجال: *{label}*\n\nالخطوة 2/4 — اختر تخصصاتك (يمكنك اختيار أكثر من واحد):",
+            reply_markup=spec_subs_kb(data[4:], ctx.user_data["sel_specs"]),
             parse_mode="Markdown"
         )
 
-    elif data.startswith("spec_"):
+    elif data.startswith("spec_") and data != "spec_done":
         spec = data[5:]
-        ctx.user_data["spec"] = spec
-        await query.message.reply_text(
-            f"✅ التخصص: *{spec}*\n\n"
-            f"الخطوة 2/4 — ما مؤهلك العلمي؟",
-            reply_markup=education_kb(),
-            parse_mode="Markdown"
+        sel  = ctx.user_data.get("sel_specs", [])
+        if spec in sel:
+            sel.remove(spec)
+        else:
+            sel.append(spec)
+        ctx.user_data["sel_specs"] = sel
+        cat = ctx.user_data.get("cat", "tech")
+        await q.message.edit_reply_markup(
+            reply_markup=spec_subs_kb(cat, sel)
+        )
+
+    elif data == "spec_done":
+        if not ctx.user_data.get("sel_specs"):
+            await q.answer("⚠️ اختر تخصصاً واحداً على الأقل!", show_alert=True)
+            return
+        await q.message.reply_text(
+            f"✅ التخصصات: *{', '.join(ctx.user_data['sel_specs'])}*\n\nالخطوة 3/4 — ما مؤهلك العلمي؟",
+            reply_markup=edu_kb(), parse_mode="Markdown"
         )
 
     elif data.startswith("edu_"):
-        edu = data[4:]
-        ctx.user_data["edu"] = edu
-        await query.message.reply_text(
-            f"✅ المؤهل: *{edu}*\n\n"
-            f"الخطوة 3/4 — كم سنة خبرتك؟",
-            reply_markup=experience_kb(),
-            parse_mode="Markdown"
+        ctx.user_data["edu"] = data[4:]
+        await q.message.reply_text(
+            f"✅ المؤهل: *{data[4:]}*\n\nالخطوة 3/4 — كم سنة خبرتك؟",
+            reply_markup=exp_kb(), parse_mode="Markdown"
         )
 
     elif data.startswith("exp_"):
-        exp = data[4:]
-        ctx.user_data["exp"] = exp
-        await query.message.reply_text(
-            f"✅ الخبرة: *{exp}*\n\n"
-            f"الخطوة 4/4 — ما مدينتك المفضلة للعمل؟",
-            reply_markup=city_kb(),
-            parse_mode="Markdown"
+        ctx.user_data["exp"] = data[4:]
+        sel = ctx.user_data.get("sel_cities", [])
+        await q.message.reply_text(
+            f"✅ الخبرة: *{data[4:]}*\n\nالخطوة 4/4 — اختر مدنك المفضلة (يمكنك اختيار أكثر من واحدة):",
+            reply_markup=cities_kb(sel), parse_mode="Markdown"
         )
 
-    elif data.startswith("city_"):
-        city    = data[5:]
-        spec    = ctx.user_data.get("spec","")
-        edu     = ctx.user_data.get("edu","")
-        exp     = ctx.user_data.get("exp","")
+    elif data.startswith("city_") and data != "city_done":
+        city = data[5:]
+        sel  = ctx.user_data.get("sel_cities", [])
+        if city in sel:
+            sel.remove(city)
+        else:
+            sel.append(city)
+        ctx.user_data["sel_cities"] = sel
+        await q.message.edit_reply_markup(reply_markup=cities_kb(sel))
+
+    elif data == "city_done":
+        if not ctx.user_data.get("sel_cities"):
+            await q.answer("⚠️ اختر مدينة واحدة على الأقل!", show_alert=True)
+            return
         profile = {
-            "specialization": spec,
-            "education":      edu,
-            "experience":     exp,
-            "city":           city
+            "specializations": ctx.user_data.get("sel_specs", []),
+            "education":       ctx.user_data.get("edu", ""),
+            "experience":      ctx.user_data.get("exp", ""),
+            "cities":          ctx.user_data.get("sel_cities", []),
         }
         update_user(chat_id, {"profile": profile, "plan": "free", "applied_count": 0})
-        await query.message.reply_text(
-            f"🎉 *تم إنشاء ملفك الوظيفي بنجاح!*\n\n"
+        specs_text  = "\n".join(f"   • {s}" for s in profile["specializations"])
+        cities_text = "، ".join(profile["cities"])
+        await q.message.reply_text(
+            f"🎉 *تم إنشاء ملفك الوظيفي!*\n\n"
             f"👤 *ملخص ملفك:*\n"
-            f"├ 💼 التخصص: {spec}\n"
-            f"├ 🎓 المؤهل: {edu}\n"
-            f"├ 📅 الخبرة: {exp}\n"
-            f"└ 📍 المدينة: {city}\n\n"
-            f"🟢 البوت سيبحث لك تلقائياً كل 6 ساعات في 8 مصادر!\n\n"
-            f"💡 *الخطوة التالية:* اختر باقتك أو ابدأ البحث مجاناً",
-            reply_markup=main_menu_kb(True),
-            parse_mode="Markdown"
+            f"{'─'*28}\n"
+            f"💼 *التخصصات:*\n{specs_text}\n"
+            f"🎓 المؤهل: {profile['education']}\n"
+            f"📅 الخبرة: {profile['experience']}\n"
+            f"📍 المدن: {cities_text}\n"
+            f"{'─'*28}\n\n"
+            f"🟢 البوت سيبحث لك كل 6 ساعات في 8 مصادر!\n"
+            f"💡 *الخطوة التالية:* أرسل CV لتفعيل التقديم التلقائي",
+            reply_markup=main_kb(True), parse_mode="Markdown"
         )
 
     # ── Plans ────────────────────────────────────────
     elif data == "show_plans":
-        current = user.get("plan","free")
-        text    = "💎 *الباقات والاشتراكات*\n\n"
-        for key, plan in PLANS.items():
-            badge = " ✅ *باقتك الحالية*" if key == current else ""
-            price = "مجاني" if plan["price"] == 0 else f"{plan['price']} ريال"
-            text += (
-                f"{plan['name']}{badge}\n"
-                f"├ 💰 السعر: {price}\n"
-                f"├ 📋 {plan['description']}\n"
-                f"└ {'─'*20}\n\n"
-            )
-        await query.message.reply_text(text, reply_markup=plans_kb(), parse_mode="Markdown")
+        cur  = user.get("plan", "free")
+        text = "💎 *الباقات والاشتراكات*\n\n"
+        for k, p in PLANS.items():
+            badge = " ✅ *باقتك الحالية*" if k == cur else ""
+            price = "مجاني" if p["price"] == 0 else f"{p['price']} ريال"
+            text += f"{p['name']}{badge}\n├ 💰 {price}\n├ 📋 {p['desc']}\n└ {'─'*22}\n\n"
+        await q.message.reply_text(text, reply_markup=plans_kb(), parse_mode="Markdown")
 
     elif data.startswith("plan_"):
-        plan_key = data[5:]
-        plan     = PLANS[plan_key]
+        pk   = data[5:]
+        plan = PLANS[pk]
         if plan["price"] == 0:
             update_user(chat_id, {"plan": "free"})
-            await query.message.reply_text(
-                "✅ أنت على الباقة المجانية.\nسيعرض البوت الوظائف وتقدم بنفسك.",
-                reply_markup=main_menu_kb(True)
-            )
+            await q.message.reply_text("✅ أنت على الباقة المجانية.", reply_markup=main_kb(True))
         else:
-            # Send Salla payment link
-            salla_links = {
-                "basic": os.environ.get("SALLA_LINK_BASIC", "https://s.sa/basic"),
-                "pro":   os.environ.get("SALLA_LINK_PRO",   "https://s.sa/pro"),
-                "elite": os.environ.get("SALLA_LINK_ELITE", "https://s.sa/elite"),
+            links = {
+                "basic": os.environ.get("SALLA_LINK_BASIC", "https://salla.sa"),
+                "pro":   os.environ.get("SALLA_LINK_PRO",   "https://salla.sa"),
+                "elite": os.environ.get("SALLA_LINK_ELITE", "https://salla.sa"),
             }
-            link = salla_links.get(plan_key, "#")
-            await query.message.reply_text(
+            await q.message.reply_text(
                 f"💳 *الاشتراك في {plan['name']}*\n\n"
                 f"السعر: *{plan['price']} ريال*\n"
-                f"المميزات: {plan['description']}\n\n"
-                f"اضغط على الرابط أدناه للدفع الآمن عبر سلة:\n"
-                f"👉 [ادفع الآن — {plan['price']} ريال]({link})\n\n"
+                f"المميزات: {plan['desc']}\n\n"
+                f"👉 [ادفع الآن — {plan['price']} ريال]({links.get(pk,'#')})\n\n"
                 f"✅ بعد الدفع سيتم تفعيل باقتك تلقائياً.",
-                parse_mode="Markdown",
-                disable_web_page_preview=False
+                parse_mode="Markdown"
             )
 
     # ── Search now ───────────────────────────────────
     elif data == "search_now":
-        if not user.get("profile",{}).get("specialization"):
-            await query.message.reply_text("⚠️ أنشئ ملفك الوظيفي أولاً.")
+        if not user.get("profile", {}).get("specializations"):
+            await q.message.reply_text("⚠️ أنشئ ملفك أولاً.")
             return
-        await query.message.reply_text(
+        await q.message.reply_text(
             "⏳ *جاري البحث في 8 مصادر...*\n\n"
-            "🇸🇦 جدارات • 🌐 Indeed • 💼 Bayt\n"
-            "🔵 LinkedIn • 🌟 GulfTalent • 📋 Naukrigulf\n"
-            "🏢 Glassdoor • 🇸🇦 Tanqeeb\n\n"
-            "قد يستغرق دقيقة واحدة ⏱️",
+            "🇸🇦 جدارات • 🌐 Indeed • 💼 Bayt • 🔵 LinkedIn\n"
+            "🌟 GulfTalent • 📋 Naukrigulf • 🏢 Glassdoor • 🇸🇦 Tanqeeb\n\n"
+            "⏱️ قد يستغرق دقيقة...",
             parse_mode="Markdown"
         )
-        threading.Thread(
-            target=run_job_search,
-            args=(chat_id, ctx.application, True),
-            daemon=True
-        ).start()
+        threading.Thread(target=run_job_search, args=(chat_id, ctx.application, True), daemon=True).start()
 
     # ── View profile ─────────────────────────────────
     elif data == "view_profile":
-        prof    = user.get("profile",{})
-        plan    = PLANS.get(user.get("plan","free"), PLANS["free"])
-        applied = user.get("applied_count",0)
-        await query.message.reply_text(
-            f"👤 *ملفك الوظيفي*\n"
-            f"{'─'*28}\n"
-            f"💼 التخصص: {prof.get('specialization','—')}\n"
+        prof  = user.get("profile", {})
+        plan  = PLANS.get(user.get("plan","free"), PLANS["free"])
+        specs = "\n".join(f"   • {s}" for s in prof.get("specializations", []))
+        cities = "، ".join(prof.get("cities", []))
+        await q.message.reply_text(
+            f"👤 *ملفك الوظيفي*\n{'─'*28}\n"
+            f"💼 *التخصصات:*\n{specs or '   —'}\n"
             f"🎓 المؤهل: {prof.get('education','—')}\n"
             f"📅 الخبرة: {prof.get('experience','—')}\n"
-            f"📍 المدينة: {prof.get('city','—')}\n\n"
+            f"📍 المدن: {cities or '—'}\n\n"
             f"{'─'*28}\n"
             f"💎 الباقة: {plan['name']}\n"
-            f"🚀 التقديمات: {applied}/{plan['max_jobs'] if plan['max_jobs'] else '∞ يدوي'}\n",
+            f"🚀 التقديمات: {user.get('applied_count',0)}/{plan['max_jobs'] if plan['max_jobs'] else '∞ يدوي'}\n"
+            f"📎 CV: {'✅ مرفوع' if user.get('cv_path') else '❌ لم يُرفع'}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✏️ تعديل الملف", callback_data="onboard_start")],
-                [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]
+                [InlineKeyboardButton("✏️ تعديل الملف",    callback_data="ob_start")],
+                [InlineKeyboardButton("📎 رفع CV جديد",    callback_data="upload_cv")],
+                [InlineKeyboardButton("⬅️ رجوع",          callback_data="main_menu")],
             ]),
             parse_mode="Markdown"
         )
 
+    elif data == "upload_cv":
+        ctx.user_data["step"] = "waiting_cv"
+        await q.message.reply_text("📎 أرسل ملف CV بصيغة PDF:")
+
     # ── Stats ────────────────────────────────────────
     elif data == "stats":
-        applied    = user.get("applied_count",0)
-        seen       = len(user.get("seen_jobs",[]))
-        last_s     = user.get("last_job_search",0)
-        last_str   = datetime.fromtimestamp(last_s).strftime("%Y/%m/%d %H:%M") if last_s else "لم يبدأ"
-        plan       = PLANS.get(user.get("plan","free"), PLANS["free"])
-        next_min   = max(0, int((last_s + JOB_SEARCH_INTERVAL - time.time()) / 60)) if last_s else 360
-        await query.message.reply_text(
-            f"📊 *إحصائياتك*\n"
-            f"{'─'*28}\n"
-            f"🔍 وظائف تم فحصها: {seen}\n"
-            f"🚀 تقديمات تلقائية: {applied}\n"
+        last_s   = user.get("last_job_search", 0)
+        next_min = max(0, int((last_s + JOB_SEARCH_INTERVAL - time.time()) / 60)) if last_s else 360
+        last_str = datetime.fromtimestamp(last_s).strftime("%Y/%m/%d %H:%M") if last_s else "لم يبدأ"
+        plan     = PLANS.get(user.get("plan","free"), PLANS["free"])
+        await q.message.reply_text(
+            f"📊 *إحصائياتك*\n{'─'*28}\n"
+            f"🔍 وظائف تم فحصها: {len(user.get('seen_jobs',[]))}\n"
+            f"📧 تقديمات بالإيميل: {user.get('applied_count',0)}\n"
             f"💎 الباقة: {plan['name']}\n"
             f"🕐 آخر بحث: {last_str}\n"
             f"⏳ البحث القادم: بعد {next_min} دقيقة\n"
-            f"📡 المصادر: 8 مصادر نشطة\n",
+            f"📡 المصادر: 8 مصادر نشطة\n"
+            f"📎 CV: {'✅ مرفوع' if user.get('cv_path') else '❌ لم يُرفع'}",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")]]),
             parse_mode="Markdown"
         )
@@ -830,96 +850,111 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── Gmail setup ──────────────────────────────────
     elif data == "setup_email":
         ctx.user_data["step"] = "waiting_gmail"
-        await query.message.reply_text(
-            "📧 *ربط Gmail*\n\n"
-            "أرسل لي عنوان Gmail الخاص بك:",
+        await q.message.reply_text(
+            "📧 *ربط Gmail وإرسال CV*\n\n"
+            "هذا يتيح للبوت التقديم عنك تلقائياً على وظائف الإيميل.\n\n"
+            "أرسل عنوان Gmail الخاص بك:",
             parse_mode="Markdown"
         )
 
-# ── Message handler ──────────────────────────────────
 async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
-    step    = ctx.user_data.get("step","")
+    step    = ctx.user_data.get("step", "")
     text    = update.message.text or ""
 
     if step == "waiting_gmail":
         if "@gmail.com" not in text:
-            await update.message.reply_text("⚠️ عنوان Gmail غير صحيح. حاول مرة أخرى.")
+            await update.message.reply_text("⚠️ عنوان Gmail غير صحيح.")
             return
         update_user(chat_id, {"gmail": text.strip()})
         ctx.user_data["step"] = "waiting_app_password"
         await update.message.reply_text(
             "✅ تم حفظ الإيميل!\n\n"
-            "*الآن أحتاج App Password:*\n\n"
-            "1. اذهب إلى: myaccount.google.com\n"
-            "2. الأمان ← التحقق بخطوتين (فعّله)\n"
-            "3. ابحث عن *App Passwords*\n"
-            "4. App: Mail ← Device: Other ← اكتب 'Job Bot'\n"
-            "5. انسخ الرمز (16 حرف) وأرسله هنا\n\n"
+            "*الآن أحتاج App Password (16 حرف):*\n\n"
+            "1. myaccount.google.com\n"
+            "2. الأمان ← التحقق بخطوتين\n"
+            "3. App Passwords ← Mail ← Other ← 'Job Bot'\n"
+            "4. انسخ الرمز وأرسله هنا\n\n"
             "🔗 https://myaccount.google.com/apppasswords",
             parse_mode="Markdown"
         )
 
     elif step == "waiting_app_password":
-        pwd = text.replace(" ","").strip()
+        pwd = text.replace(" ", "").strip()
         if len(pwd) != 16:
-            await update.message.reply_text("⚠️ الرمز يجب أن يكون 16 حرفاً بالضبط.")
+            await update.message.reply_text("⚠️ الرمز يجب أن يكون 16 حرفاً.")
             return
         await update.message.reply_text("⏳ جاري التحقق من Gmail...")
         try:
             m = imaplib.IMAP4_SSL("imap.gmail.com")
-            m.login(get_user(chat_id).get("gmail",""), pwd)
+            m.login(get_user(chat_id).get("gmail", ""), pwd)
             m.logout()
             update_user(chat_id, {"app_password": pwd, "last_uid": None})
-            ctx.user_data["step"] = ""
+            ctx.user_data["step"] = "waiting_cv"
             await update.message.reply_text(
                 "✅ *تم ربط Gmail بنجاح!*\n\n"
-                "📬 البوت سيراقب إيميلك ويُنبّهك بأي فرصة عمل.",
-                reply_markup=main_menu_kb(True),
+                "📎 الآن أرسل ملف CV بصيغة *PDF* لتفعيل التقديم التلقائي:",
                 parse_mode="Markdown"
             )
         except Exception as e:
             await update.message.reply_text(
-                f"❌ فشل الاتصال بـ Gmail.\n\n"
-                f"تأكد من:\n• تفعيل التحقق بخطوتين\n"
-                f"• تفعيل IMAP في إعدادات Gmail\n"
-                f"• صحة الرمز (16 حرف)\n\n"
-                f"الخطأ: `{str(e)[:100]}`",
+                f"❌ فشل الاتصال.\n\nتأكد من:\n"
+                f"• تفعيل التحقق بخطوتين\n• تفعيل IMAP في Gmail\n"
+                f"• صحة الرمز (16 حرف)\n\nالخطأ: `{str(e)[:100]}`",
                 parse_mode="Markdown"
             )
 
-# ── Search command ───────────────────────────────────
-async def search_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def doc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
-    user    = get_user(chat_id)
-    if not user.get("profile",{}).get("specialization"):
-        await update.message.reply_text("⚠️ أنشئ ملفك الوظيفي أولاً عبر /start")
+    step    = ctx.user_data.get("step", "")
+    if step != "waiting_cv" and step != "":
+        return
+    if not update.message.document:
+        return
+    doc = update.message.document
+    if "pdf" not in (doc.mime_type or ""):
+        await update.message.reply_text("⚠️ أرسل الملف بصيغة PDF فقط.")
+        return
+    await update.message.reply_text("⏳ جاري حفظ CV...")
+    try:
+        file      = await ctx.bot.get_file(doc.file_id)
+        cv_path   = f"{CV_DIR}/cv_{chat_id}.pdf"
+        await file.download_to_drive(cv_path)
+        update_user(chat_id, {"cv_path": cv_path})
+        ctx.user_data["step"] = ""
+        user = get_user(chat_id)
+        plan = PLANS.get(user.get("plan","free"), PLANS["free"])
+        await update.message.reply_text(
+            "✅ *تم رفع CV بنجاح!*\n\n"
+            f"{'🚀 البوت سيقدم عنك تلقائياً على وظائف الإيميل!' if plan['auto_apply'] else '💡 فعّل باقة مدفوعة ليقدم البوت عنك تلقائياً.'}\n\n"
+            "🔍 يمكنك البحث عن وظائف الآن.",
+            reply_markup=main_kb(True),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ في رفع CV: {e}")
+
+async def search_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if not get_user(chat_id).get("profile", {}).get("specializations"):
+        await update.message.reply_text("⚠️ أنشئ ملفك أولاً عبر /start")
         return
     await update.message.reply_text("⏳ جاري البحث في 8 مصادر...")
     threading.Thread(target=run_job_search, args=(chat_id, ctx.application, True), daemon=True).start()
-
-# ── Salla webhook (payment confirmation) ─────────────
-async def salla_webhook(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handle payment confirmation from Salla via Telegram message."""
-    # In production: use a web server endpoint for Salla webhooks
-    pass
 
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-
     app.add_handler(CommandHandler("start",  start))
-    app.add_handler(CommandHandler("search", search_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("search", search_cmd))
+    app.add_handler(CallbackQueryHandler(btn))
+    app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-    # Background threads
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
-
-    logger.info("🤖 بوت الوظائف الذكي v2.0 — يعمل الآن!")
+    logger.info("🤖 بوت الوظائف الذكي v3.0 — يعمل!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
