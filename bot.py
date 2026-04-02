@@ -368,7 +368,9 @@ def analyze_job(job: dict, profile: dict) -> dict | None:
   "deadline": "آخر موعد إن وُجد أو غير محدد"
 }}
 """, max_tokens=600)
-    if result and result.get("match") and result.get("score", 0) >= 6:
+    if result:
+        logger.info(f"Job: match={result.get('match')} score={result.get('score')} - {job.get('title','')[:40]}")
+    if result and result.get("match") and result.get("score", 0) >= 4:
         return result
     return None
 
