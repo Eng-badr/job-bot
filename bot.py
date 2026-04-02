@@ -154,15 +154,28 @@ def ai_json(prompt: str, max_tokens: int = 400) -> dict | None:
 # ══════════════════════════════════════════════════════
 #  JOB SOURCES
 # ══════════════════════════════════════════════════════
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+}
+
 def fetch_rss(url: str, source: str) -> list[dict]:
     jobs = []
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            root = ET.fromstring(resp.read().decode("utf-8", errors="replace"))
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw  = resp.read().decode("utf-8", errors="replace")
+            # Clean invalid XML chars
+            raw  = "".join(c for c in raw if c.isprintable() or c in "\n\r\t")
+            root = ET.fromstring(raw)
         for item in root.findall(".//item")[:15]:
-            title = item.findtext("title", "")
-            if title:
+            title = item.findtext("title", "").strip()
+            if title and len(title) > 3:
                 jobs.append({
                     "title":   title,
                     "company": item.findtext("source", item.findtext("author", "")),
@@ -174,31 +187,119 @@ def fetch_rss(url: str, source: str) -> list[dict]:
         logger.warning(f"RSS {source}: {e}")
     return jobs
 
+def fetch_google_jobs(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
+    """Google Jobs RSS — most reliable, aggregates all sources."""
+    jobs = []
+    try:
+        q   = urllib.parse.quote(f"{keywords} jobs {location}")
+        url = f"https://www.google.com/search?q={q}&ibp=htl;jobs&output=rss"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw  = resp.read().decode("utf-8", errors="replace")
+            raw  = "".join(c for c in raw if c.isprintable() or c in "\n\r\t")
+            root = ET.fromstring(raw)
+        for item in root.findall(".//item")[:20]:
+            title = item.findtext("title", "").strip()
+            if title:
+                jobs.append({
+                    "title":   title,
+                    "company": item.findtext("source",""),
+                    "link":    item.findtext("link",""),
+                    "desc":    item.findtext("description","")[:500],
+                    "source":  "Google Jobs 🔍"
+                })
+    except Exception as e:
+        logger.warning(f"Google Jobs: {e}")
+    return jobs
+
+def fetch_remotive(keywords: str) -> list[dict]:
+    """Remotive.io — free JSON API, no blocking."""
+    jobs = []
+    try:
+        q   = urllib.parse.quote(keywords)
+        url = f"https://remotive.com/api/remote-jobs?search={q}&limit=15"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for item in data.get("jobs", [])[:15]:
+            title = item.get("title","")
+            if title:
+                jobs.append({
+                    "title":   title,
+                    "company": item.get("company_name",""),
+                    "location": item.get("candidate_required_location","Remote"),
+                    "link":    item.get("url",""),
+                    "desc":    item.get("description","")[:500],
+                    "source":  "Remotive 🌍"
+                })
+    except Exception as e:
+        logger.warning(f"Remotive: {e}")
+    return jobs
+
+def fetch_arbeitnow(keywords: str) -> list[dict]:
+    """Arbeitnow — free open API for international jobs."""
+    jobs = []
+    try:
+        q   = urllib.parse.quote(keywords)
+        url = f"https://www.arbeitnow.com/api/job-board-api?search={q}"
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for item in data.get("data", [])[:15]:
+            title = item.get("title","")
+            if title:
+                jobs.append({
+                    "title":    title,
+                    "company":  item.get("company_name",""),
+                    "location": item.get("location",""),
+                    "link":     item.get("url",""),
+                    "desc":     item.get("description","")[:500],
+                    "source":   "Arbeitnow 💼"
+                })
+    except Exception as e:
+        logger.warning(f"Arbeitnow: {e}")
+    return jobs
+
 def fetch_jadarat(kw: str) -> list[dict]:
+    """Jadarat Saudi official platform."""
     jobs = []
     try:
         q   = urllib.parse.quote(kw)
+        # Try RSS feed first
+        url = f"https://jadarat.sa/jobs?q={q}&format=rss"
+        jobs = fetch_rss(url, "جدارات 🇸🇦")
+        if jobs:
+            return jobs
+        # Fallback: API
         url = f"https://jadarat.sa/api/v1/jobs?q={q}&page=1&per_page=15"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        req = urllib.request.Request(url, headers={**HEADERS, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
             data  = json.loads(resp.read().decode("utf-8"))
             items = data.get("data", data.get("jobs", data.get("results", [])))
             for item in (items if isinstance(items, list) else [])[:15]:
-                title = item.get("title") or item.get("job_title") or item.get("name", "")
-                email_apply = item.get("apply_email") or item.get("email", "")
+                title = item.get("title") or item.get("job_title") or item.get("name","")
                 if title:
                     jobs.append({
-                        "title":        title,
-                        "company":      item.get("company") or item.get("employer", ""),
-                        "location":     item.get("location") or item.get("city", ""),
-                        "link":         item.get("url") or item.get("link", "https://jadarat.sa"),
-                        "desc":         item.get("description", "")[:500],
-                        "email_apply":  email_apply,
-                        "source":       "جدارات 🇸🇦"
+                        "title":       title,
+                        "company":     item.get("company") or item.get("employer",""),
+                        "location":    item.get("location") or item.get("city",""),
+                        "link":        item.get("url") or item.get("link","https://jadarat.sa"),
+                        "desc":        item.get("description","")[:500],
+                        "email_apply": item.get("apply_email") or item.get("email",""),
+                        "source":      "جدارات 🇸🇦"
                     })
     except Exception as e:
         logger.warning(f"Jadarat: {e}")
     return jobs
+
+def fetch_wuzzuf(keywords: str) -> list[dict]:
+    """Wuzzuf — popular Arab job platform with RSS."""
+    q = urllib.parse.quote(keywords)
+    return fetch_rss(f"https://wuzzuf.net/search/jobs/?q={q}&country=saudi-arabia&format=rss", "Wuzzuf 🌐")
+
+def fetch_bayt(keywords: str) -> list[dict]:
+    q = urllib.parse.quote(keywords.replace(" ","-"))
+    return fetch_rss(f"https://www.bayt.com/en/saudi-arabia/jobs/{q}-jobs/?rss=1", "Bayt 💼")
 
 def fetch_all(keywords: str) -> list[dict]:
     results = {}
@@ -208,16 +309,13 @@ def fetch_all(keywords: str) -> list[dict]:
         except:
             results[name] = []
 
-    q = urllib.parse.quote(keywords)
     tasks = {
-        "jadarat":    lambda: fetch_jadarat(keywords),
-        "indeed":     lambda: fetch_rss(f"https://www.indeed.com/rss?q={q}&l=Saudi+Arabia&sort=date", "Indeed 🌐"),
-        "bayt":       lambda: fetch_rss(f"https://www.bayt.com/en/international/jobs/{urllib.parse.quote(keywords.replace(' ','-'))}-jobs/?rss=1", "Bayt 💼"),
-        "gulftalent": lambda: fetch_rss(f"https://www.gulftalent.com/saudi-arabia/jobs/rss?q={q}", "GulfTalent 🌟"),
-        "naukrigulf": lambda: fetch_rss(f"https://www.naukrigulf.com/rss/jobs-in-saudi-arabia?q={q}", "Naukrigulf 📋"),
-        "linkedin":   lambda: fetch_rss(f"https://www.linkedin.com/jobs/search/?keywords={q}&location=Saudi+Arabia&f_TPR=r86400&format=rss", "LinkedIn 🔵"),
-        "glassdoor":  lambda: fetch_rss(f"https://www.glassdoor.com/Job/jobs.htm?sc.keyword={q}&locT=N&locId=140&format=rss", "Glassdoor 🏢"),
-        "tanqeeb":    lambda: fetch_rss(f"https://tanqeeb.com/sa/jobs/rss?q={q}", "Tanqeeb 🇸🇦"),
+        "google":    lambda: fetch_google_jobs(keywords),
+        "jadarat":   lambda: fetch_jadarat(keywords),
+        "remotive":  lambda: fetch_remotive(keywords),
+        "arbeitnow": lambda: fetch_arbeitnow(keywords),
+        "bayt":      lambda: fetch_bayt(keywords),
+        "wuzzuf":    lambda: fetch_wuzzuf(keywords),
     }
     threads = [threading.Thread(target=run, args=(n, f), daemon=True) for n, f in tasks.items()]
     for t in threads: t.start()
