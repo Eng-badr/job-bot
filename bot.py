@@ -187,217 +187,70 @@ def fetch_rss(url: str, source: str) -> list[dict]:
         logger.warning(f"RSS {source}: {e}")
     return jobs
 
-def fetch_adzuna(keywords: str) -> list[dict]:
-    """Adzuna — free official API, covers Saudi Arabia & Middle East."""
+def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
+    """JSearch API via RapidAPI — searches Google Jobs, LinkedIn, Indeed, Glassdoor."""
     jobs = []
     try:
-        app_id  = os.environ.get("ADZUNA_APP_ID", "")
-        app_key = os.environ.get("ADZUNA_APP_KEY", "")
-        if not app_id or not app_key:
-            return []
-        q   = urllib.parse.quote(keywords)
-        # Try Saudi Arabia first
-        for country in ["sa", "ae", "gb"]:
-            url = (f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
-                   f"?app_id={app_id}&app_key={app_key}"
-                   f"&results_per_page=15&what={q}&content-type=application/json")
-            req = urllib.request.Request(url, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            for item in data.get("results", [])[:15]:
-                title = item.get("title","")
-                if title:
-                    jobs.append({
-                        "title":    title,
-                        "company":  item.get("company",{}).get("display_name",""),
-                        "location": item.get("location",{}).get("display_name",""),
-                        "link":     item.get("redirect_url",""),
-                        "desc":     item.get("description","")[:500],
-                        "source":   f"Adzuna 🌍"
-                    })
-            if jobs:
-                break
-    except Exception as e:
-        logger.warning(f"Adzuna: {e}")
-    return jobs
-
-def fetch_reed(keywords: str) -> list[dict]:
-    """Reed.co.uk — free API, has Middle East jobs."""
-    jobs = []
-    try:
-        api_key = os.environ.get("REED_API_KEY","")
+        api_key = os.environ.get("JSEARCH_API_KEY", "")
         if not api_key:
+            logger.warning("JSearch: No API key found")
             return []
-        q   = urllib.parse.quote(keywords)
-        url = f"https://www.reed.co.uk/api/1.0/search?keywords={q}&locationName=Saudi+Arabia&resultsToTake=15"
-        import base64
-        creds = base64.b64encode(f"{api_key}:".encode()).decode()
-        req   = urllib.request.Request(url, headers={**HEADERS, "Authorization": f"Basic {creds}"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        for item in data.get("results", [])[:15]:
-            title = item.get("jobTitle","")
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  item.get("employerName",""),
-                    "location": item.get("locationName",""),
-                    "link":     item.get("jobUrl",""),
-                    "desc":     item.get("jobDescription","")[:500],
-                    "source":   "Reed 🇬🇧"
-                })
-    except Exception as e:
-        logger.warning(f"Reed: {e}")
-    return jobs
-
-def fetch_remotive(keywords: str) -> list[dict]:
-    """Remotive — free JSON API for remote jobs."""
-    jobs = []
-    try:
-        q   = urllib.parse.quote(keywords)
-        url = f"https://remotive.com/api/remote-jobs?search={q}&limit=10"
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        for item in data.get("jobs", [])[:10]:
-            title = item.get("title","")
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  item.get("company_name",""),
-                    "location": "Remote 🌍",
-                    "link":     item.get("url",""),
-                    "desc":     item.get("description","")[:500],
-                    "source":   "Remotive 🌍"
-                })
-    except Exception as e:
-        logger.warning(f"Remotive: {e}")
-    return jobs
-
-def fetch_thehub(keywords: str) -> list[dict]:
-    """The Hub (thehub.io) — free API."""
-    jobs = []
-    try:
-        q   = urllib.parse.quote(keywords)
-        url = f"https://thehub.io/api/v1/jobs?q={q}&limit=10"
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        for item in (data if isinstance(data, list) else data.get("jobs", data.get("data",[])))[:10]:
-            title = item.get("title","") or item.get("name","")
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  item.get("company",{}).get("name","") if isinstance(item.get("company"),dict) else str(item.get("company","")),
-                    "location": item.get("location",""),
-                    "link":     item.get("url","") or item.get("applyUrl",""),
-                    "desc":     item.get("description","")[:500],
-                    "source":   "TheHub 🔵"
-                })
-    except Exception as e:
-        logger.warning(f"TheHub: {e}")
-    return jobs
-
-def fetch_linkedin_jobs_api(keywords: str) -> list[dict]:
-    """LinkedIn Jobs via unofficial public endpoint."""
-    jobs = []
-    try:
-        q   = urllib.parse.quote(keywords)
-        url = (f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-               f"?keywords={q}&location=Saudi%20Arabia&start=0")
+        q   = urllib.parse.quote(f"{keywords} in {location}")
+        url = f"https://jsearch.p.rapidapi.com/search?query={q}&page=1&num_pages=3&date_posted=month"
         req = urllib.request.Request(url, headers={
-            **HEADERS,
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://www.linkedin.com/jobs/search/",
+            "X-RapidAPI-Key":  api_key,
+            "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
         })
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-        # Parse job cards from HTML
-        import re
-        titles    = re.findall(r'class="base-search-card__title"[^>]*>(.*?)</h3>', html, re.DOTALL)
-        companies = re.findall(r'class="base-search-card__subtitle"[^>]*>(.*?)</a>', html, re.DOTALL)
-        locations = re.findall(r'class="job-search-card__location"[^>]*>(.*?)</span>', html, re.DOTALL)
-        links     = re.findall(r'href="(https://www\.linkedin\.com/jobs/view/[^"]+)"', html)
-        for i, title in enumerate(titles[:15]):
-            title = re.sub(r'\s+', ' ', title).strip()
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  re.sub(r'\s+',' ', companies[i]).strip() if i < len(companies) else "",
-                    "location": re.sub(r'\s+',' ', locations[i]).strip() if i < len(locations) else "السعودية",
-                    "link":     links[i].split("?")[0] if i < len(links) else "",
-                    "desc":     "",
-                    "source":   "LinkedIn 🔵"
-                })
-    except Exception as e:
-        logger.warning(f"LinkedIn: {e}")
-    return jobs
-
-def fetch_indeed_jobs(keywords: str) -> list[dict]:
-    """Indeed via public JSON API."""
-    jobs = []
-    try:
-        q   = urllib.parse.quote(keywords)
-        url = f"https://sa.indeed.com/jobs?q={q}&format=json&limit=15"
-        req = urllib.request.Request(url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        for item in data.get("results", data.get("jobs", []))[:15]:
-            title = item.get("jobtitle","") or item.get("title","")
+        for item in data.get("data", [])[:20]:
+            title = item.get("job_title", "")
             if title:
                 jobs.append({
-                    "title":    title,
-                    "company":  item.get("company",""),
-                    "location": item.get("formattedLocation", item.get("location","السعودية")),
-                    "link":     "https://sa.indeed.com" + item.get("url",""),
-                    "desc":     item.get("snippet","")[:500],
-                    "source":   "Indeed 🌐"
+                    "title":       title,
+                    "company":     item.get("employer_name", ""),
+                    "location":    f"{item.get('job_city','')} {item.get('job_country','')}".strip(),
+                    "link":        item.get("job_apply_link") or item.get("job_google_link", ""),
+                    "desc":        item.get("job_description", "")[:500],
+                    "email_apply": item.get("job_apply_email", ""),
+                    "work_type":   "عن بعد" if item.get("job_is_remote") else "حضوري",
+                    "source":      f"🔍 {item.get('job_publisher', 'JSearch')}"
                 })
+        logger.info(f"JSearch: {len(jobs)} jobs for '{keywords}'")
     except Exception as e:
-        logger.warning(f"Indeed JSON: {e}")
-    # Fallback: RSS
-    if not jobs:
-        q2 = urllib.parse.quote(keywords)
-        jobs = fetch_rss(
-            f"https://sa.indeed.com/rss?q={q2}&sort=date",
-            "Indeed 🌐"
-        )
+        logger.warning(f"JSearch error: {e}")
     return jobs
 
 def fetch_all(keywords: str) -> list[dict]:
-    """Fetch from all available sources concurrently."""
-    results = {}
-    def run(name, fn):
-        try:
-            r = fn()
-            results[name] = r
-            logger.info(f"✅ {name}: {len(r)} jobs")
-        except Exception as e:
-            logger.warning(f"❌ {name}: {e}")
-            results[name] = []
+    """Fetch from JSearch — covers Google Jobs, LinkedIn, Indeed, Glassdoor."""
+    # Search with different keyword variations for more results
+    results = []
+    seen    = set()
 
-    tasks = {
-        "adzuna":   lambda: fetch_adzuna(keywords),
-        "reed":     lambda: fetch_reed(keywords),
-        "linkedin": lambda: fetch_linkedin_jobs_api(keywords),
-        "indeed":   lambda: fetch_indeed_jobs(keywords),
-        "remotive": lambda: fetch_remotive(keywords),
-        "thehub":   lambda: fetch_thehub(keywords),
-    }
-    threads = [threading.Thread(target=run, args=(n, f), daemon=True) for n, f in tasks.items()]
+    search_queries = [
+        f"{keywords} Saudi Arabia",
+        f"{keywords} الرياض",
+        f"{keywords} جدة",
+    ]
+
+    threads_data = {}
+    def run(q):
+        threads_data[q] = fetch_jsearch(q.split(" Saudi Arabia")[0].split(" الرياض")[0].split(" جدة")[0],
+                                         "Saudi Arabia" if "Saudi" in q or "الرياض" in q or "جدة" in q else "Saudi Arabia")
+
+    threads = [threading.Thread(target=run, args=(q,), daemon=True) for q in search_queries]
     for t in threads: t.start()
-    for t in threads: t.join(timeout=25)
+    for t in threads: t.join(timeout=30)
 
-    all_jobs, seen = [], set()
-    for jobs in results.values():
+    for jobs in threads_data.values():
         for j in jobs:
             key = f"{j.get('title','').lower().strip()}|{j.get('company','').lower().strip()}"
             if key not in seen:
                 seen.add(key)
-                all_jobs.append(j)
+                results.append(j)
 
-    logger.info(f"🔍 Total unique jobs: {len(all_jobs)}")
-    return all_jobs
+    logger.info(f"🔍 Total unique jobs: {len(results)}")
+    return results
 
 # ══════════════════════════════════════════════════════
 #  AI JOB ANALYSIS
