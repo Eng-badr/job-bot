@@ -430,10 +430,11 @@ def run_job_search(chat_id: str, app, manual: bool = False):
                 card += f"\n\n🤖 *تم إرسال طلب التقديم بالإيميل عنك!*"
 
         try:
-            app.bot.send_message(
+            import asyncio
+            asyncio.run(app.bot.send_message(
                 chat_id=int(chat_id), text=card,
                 parse_mode="Markdown", disable_web_page_preview=False
-            )
+            ))
             found += 1
         except Exception as e:
             logger.error(f"Send error: {e}")
@@ -446,16 +447,16 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 
     if manual and found == 0:
         try:
-            app.bot.send_message(
+            import asyncio
+            asyncio.run(app.bot.send_message(
                 chat_id=int(chat_id),
                 text=(
                     "🔍 *نتيجة البحث*\n\n"
-                    "بحثت في 8 مصادر (جدارات، Indeed، Bayt، LinkedIn، GulfTalent، Naukrigulf، Glassdoor، Tanqeeb)\n\n"
-                    "ما وجدت وظائف جديدة مناسبة الآن.\n"
+                    "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
                     "⏰ سأبحث تلقائياً بعد 6 ساعات."
                 ),
                 parse_mode="Markdown"
-            )
+            ))
         except:
             pass
     return found
@@ -493,7 +494,8 @@ def email_monitor_loop(app):
                     )
                     if result and result.get("is_job") and result.get("score", 0) >= 6:
                         stars = "⭐" * min(int(result.get("score", 0)), 10)
-                        app.bot.send_message(
+                        import asyncio
+                        asyncio.run(app.bot.send_message(
                             chat_id=int(cid),
                             text=(
                                 f"📬 *إيميل وظيفة جديد!*\n\n"
@@ -503,7 +505,7 @@ def email_monitor_loop(app):
                                 f"📊 {stars} ({result['score']}/10)"
                             ),
                             parse_mode="Markdown"
-                        )
+                        ))
                     if em["uid"]:
                         uid_i = int(em["uid"])
                         if not info.get("last_uid") or uid_i > int(info.get("last_uid", 0)):
