@@ -222,35 +222,10 @@ def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
     return jobs
 
 def fetch_all(keywords: str) -> list[dict]:
-    """Fetch from JSearch — covers Google Jobs, LinkedIn, Indeed, Glassdoor."""
-    # Search with different keyword variations for more results
-    results = []
-    seen    = set()
-
-    search_queries = [
-        f"{keywords} Saudi Arabia",
-        f"{keywords} الرياض",
-        f"{keywords} جدة",
-    ]
-
-    threads_data = {}
-    def run(q):
-        threads_data[q] = fetch_jsearch(q.split(" Saudi Arabia")[0].split(" الرياض")[0].split(" جدة")[0],
-                                         "Saudi Arabia" if "Saudi" in q or "الرياض" in q or "جدة" in q else "Saudi Arabia")
-
-    threads = [threading.Thread(target=run, args=(q,), daemon=True) for q in search_queries]
-    for t in threads: t.start()
-    for t in threads: t.join(timeout=30)
-
-    for jobs in threads_data.values():
-        for j in jobs:
-            key = f"{j.get('title','').lower().strip()}|{j.get('company','').lower().strip()}"
-            if key not in seen:
-                seen.add(key)
-                results.append(j)
-
-    logger.info(f"🔍 Total unique jobs: {len(results)}")
-    return results
+    """Fetch from JSearch — one request to avoid rate limiting."""
+    jobs = fetch_jsearch(keywords, "Saudi Arabia")
+    logger.info(f"🔍 Total unique jobs: {len(jobs)}")
+    return jobs
 
 # ══════════════════════════════════════════════════════
 #  AI JOB ANALYSIS
