@@ -938,8 +938,152 @@ async def search_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not get_user(chat_id).get("profile", {}).get("specializations"):
         await update.message.reply_text("⚠️ أنشئ ملفك أولاً عبر /start")
         return
-    await update.message.reply_text("⏳ جاري البحث في 8 مصادر...")
+    await update.message.reply_text("⏳ جاري البحث في المصادر المتاحة...")
     threading.Thread(target=run_job_search, args=(chat_id, ctx.application, True), daemon=True).start()
+
+async def myid_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show user's chat ID — needed to set as admin."""
+    await update.message.reply_text(
+        f"🆔 *Chat ID تبعك:*\n`{update.effective_chat.id}`\n\n"
+        f"أضف هذا الرقم في Railway كـ `ADMIN_CHAT_ID`",
+        parse_mode="Markdown"
+    )
+
+async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Admin only — add a job posting to broadcast to matching users."""
+    admin_id = os.environ.get("ADMIN_CHAT_ID", "")
+    chat_id  = str(update.effective_chat.id)
+
+    # Check admin
+    if not admin_id or chat_id != admin_id:
+        await update.message.reply_text("⛔ هذا الأمر للمشرف فقط.")
+        return
+
+    # Get job text (everything after /add)
+    msg_text = update.message.text or ""
+    job_text = msg_text.replace("/add", "").strip()
+
+    if not job_text:
+        await update.message.reply_text(
+            "📝 *طريقة الاستخدام:*\n\n"
+            "`/add`\n"
+            "اسم الوظيفة\n"
+            "اسم الشركة\n"
+            "الموقع\n"
+            "المتطلبات\n"
+            "طريقة التواصل أو الرابط\n\n"
+            "مثال:\n"
+            "`/add\n"
+            "مطلوب مهندس بيانات\n"
+            "شركة أرامكو — الدمام\n"
+            "خبرة 3+ سنوات، Python وSQL\n"
+            "التقديم: hr@aramco.com`",
+            parse_mode="Markdown"
+        )
+        return
+
+    await update.message.reply_text("⏳ جاري تحليل الإعلان وإرساله للمستخدمين المناسبين...")
+
+    # Parse job with AI
+    analysis = ai_json(f"""
+حلّل هذا الإعلان الوظيفي واستخرج معلوماته:
+
+{job_text}
+
+أجب بـ JSON فقط:
+{{
+  "title": "المسمى الوظيفي",
+  "company": "اسم الشركة",
+  "location": "الموقع",
+  "desc": "وصف مختصر للوظيفة",
+  "requirements": ["متطلب 1", "متطلب 2"],
+  "apply_method": "email/website/whatsapp/other",
+  "apply_target": "الإيميل أو الرابط أو رقم الواتساب",
+  "specializations": ["التخصصات المناسبة من: مهندس برمجيات، علم البيانات / AI، محاسبة ومالية، إلخ"]
+}}
+""", max_tokens=400)
+
+    if not analysis:
+        await update.message.reply_text("❌ تعذّر تحليل الإعلان. تأكد من وضوح المعلومات.")
+        return
+
+    # Build job object
+    job = {
+        "title":   analysis.get("title", "وظيفة جديدة"),
+        "company": analysis.get("company", ""),
+        "location": analysis.get("location", "السعودية"),
+        "desc":    analysis.get("desc", job_text[:300]),
+        "link":    analysis.get("apply_target", "") if "http" in analysis.get("apply_target","") else "",
+        "email_apply": analysis.get("apply_target","") if "@" in analysis.get("apply_target","") else "",
+        "source":  "📢 إعلان مباشر",
+    }
+
+    target_specs = analysis.get("specializations", [])
+
+    # Broadcast to matching users
+    data      = load_data()
+    sent      = 0
+    skipped   = 0
+
+    for uid, info in data.items():
+        if uid == admin_id:
+            continue
+        profile = info.get("profile", {})
+        user_specs = profile.get("specializations", [])
+
+        # Check if any specialization matches
+        match = any(s in target_specs for s in user_specs) if target_specs else True
+
+        if not match:
+            skipped += 1
+            continue
+
+        # Analyze match for this user
+        result = match_job(job, profile) if profile else {"match": True, "score": 7, "reason": "إعلان مباشر من المشرف"}
+        if not result:
+            skipped += 1
+            continue
+
+        stars = "⭐" * min(int(result.get("score", 7)), 10)
+        reqs  = "\n".join(f"   • {r}" for r in analysis.get("requirements", [])[:4])
+
+        apply_line = ""
+        if "@" in analysis.get("apply_target",""):
+            apply_line = f"📧 *للتقديم:* `{analysis['apply_target']}`"
+        elif "http" in analysis.get("apply_target",""):
+            apply_line = f"🔗 *للتقديم:* [اضغط هنا]({analysis['apply_target']})"
+        elif analysis.get("apply_target"):
+            apply_line = f"📱 *للتواصل:* {analysis['apply_target']}"
+
+        msg = (
+            f"📢 *إعلان وظيفة جديد!*\n"
+            f"{'━'*28}\n"
+            f"💼 *{job['title']}*\n"
+            f"🏢 {job['company']}  |  📍 {job['location']}\n"
+            f"{'━'*28}\n"
+            f"📋 *المتطلبات:*\n{reqs or '   • انظر التفاصيل'}\n\n"
+            f"✨ *السبب:* {result.get('reason','مناسب لتخصصك')}\n"
+            f"📊 *الملاءمة:* {stars} ({result.get('score',7)}/10)\n\n"
+            f"{apply_line}"
+        )
+
+        try:
+            import asyncio
+            asyncio.run(ctx.bot.send_message(
+                chat_id=int(uid), text=msg,
+                parse_mode="Markdown", disable_web_page_preview=False
+            ))
+            sent += 1
+        except Exception as e:
+            logger.error(f"Broadcast error {uid}: {e}")
+
+    await update.message.reply_text(
+        f"✅ *تم إرسال الإعلان!*\n\n"
+        f"📤 أُرسل لـ: *{sent}* مستخدم\n"
+        f"⏭️ تجاوز: *{skipped}* مستخدم (غير مناسب)\n\n"
+        f"💼 *{job['title']}* — {job['company']}",
+        parse_mode="Markdown"
+    )
 
 # ══════════════════════════════════════════════════════
 #  MAIN
@@ -948,6 +1092,8 @@ def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",  start))
     app.add_handler(CommandHandler("search", search_cmd))
+    app.add_handler(CommandHandler("myid",   myid_cmd))
+    app.add_handler(CommandHandler("add",    add_cmd))
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
