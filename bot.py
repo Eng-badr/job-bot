@@ -557,13 +557,17 @@ def _fetch_imap(gmail, pwd, last_uid) -> list[dict]:
 # ══════════════════════════════════════════════════════
 def main_kb(has_profile: bool) -> InlineKeyboardMarkup:
     if not has_profile:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("📝 إنشاء ملفي الوظيفي", callback_data="ob_start")]])
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 إنشاء ملفي الوظيفي", callback_data="ob_start")],
+            [InlineKeyboardButton("🎧 تواصل مع الدعم", url="https://t.me/Badrooh_9")],
+        ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 ابحث عن وظائف الآن",  callback_data="search_now")],
         [InlineKeyboardButton("👤 ملفي الوظيفي",          callback_data="view_profile")],
         [InlineKeyboardButton("💎 الباقات والاشتراكات",   callback_data="show_plans")],
         [InlineKeyboardButton("📧 ربط Gmail وإرسال CV",  callback_data="setup_email")],
         [InlineKeyboardButton("📊 إحصائياتي",            callback_data="stats")],
+        [InlineKeyboardButton("🎧 تواصل مع الدعم",       url="https://t.me/Badrooh_9")],
     ])
 
 def multiselect_kb(options: list, selected: list, prefix: str, done_cb: str) -> InlineKeyboardMarkup:
@@ -852,8 +856,12 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.message.reply_text(
             "📧 *ربط Gmail وإرسال CV*\n\n"
             "هذا يتيح للبوت التقديم عنك تلقائياً على وظائف الإيميل.\n\n"
+            "📹 *شاهد شرح خطوات الربط:*\n"
+            "👉 https://youtube.com/shorts/WDfvVRVV8Js\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
             "أرسل عنوان Gmail الخاص بك:",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            disable_web_page_preview=False
         )
 
 async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -870,6 +878,10 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "✅ تم حفظ الإيميل!\n\n"
             "*الآن أحتاج App Password (16 حرف):*\n\n"
+            "📹 شاهد الشرح المرئي:\n"
+            "👉 https://youtube.com/shorts/WDfvVRVV8Js\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "*أو اتبع الخطوات:*\n"
             "1. myaccount.google.com\n"
             "2. الأمان ← التحقق بخطوتين\n"
             "3. App Passwords ← Mail ← Other ← 'Job Bot'\n"
