@@ -17,6 +17,7 @@ import anthropic
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, MessageHandler,
                            filters, ContextTypes, CallbackQueryHandler)
+from cv_builder import CV_STEPS, generate_cv_pdf, generate_ai_summary
 
 # ══════════════════════════════════════════════════════
 #  LOGGING
@@ -42,6 +43,7 @@ PLANS = {
     "basic": {"name": "⚡ الأساسي", "price": 24, "auto_apply": True,  "max_jobs": 200,  "desc": "تقديم تلقائي على 200 وظيفة"},
     "pro":   {"name": "🚀 المتقدم", "price": 34, "auto_apply": True,  "max_jobs": 500,  "desc": "تقديم تلقائي على 500 وظيفة"},
     "elite": {"name": "👑 النخبة",  "price": 49, "auto_apply": True,  "max_jobs": 1000, "desc": "تقديم تلقائي على 1000 وظيفة"},
+    "cv":    {"name": "📄 CV ذكي",  "price": 15, "auto_apply": False, "max_jobs": 0,    "desc": "إنشاء CV احترافي ATS بالعربي أو الإنجليزي"},
 }
 
 # ── Specializations ─────────────────────────────────
@@ -563,6 +565,7 @@ def main_kb(has_profile: bool) -> InlineKeyboardMarkup:
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 ابحث عن وظائف الآن",  callback_data="search_now")],
+        [InlineKeyboardButton("📄 أنشئ CV احترافي",      callback_data="cv_start")],
         [InlineKeyboardButton("👤 ملفي الوظيفي",          callback_data="view_profile")],
         [InlineKeyboardButton("💎 الباقات والاشتراكات",   callback_data="show_plans")],
         [InlineKeyboardButton("📧 ربط Gmail وإرسال CV",  callback_data="setup_email")],
@@ -870,7 +873,13 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     # ── Gmail setup ──────────────────────────────────
-    elif data == "setup_email":
+    elif data == "cv_start":
+        await cv_start_btn(update, ctx)
+        return
+
+    elif data.startswith("cv_lang_"):
+        await cv_lang_btn(update, ctx)
+        return
         ctx.user_data["step"] = "waiting_gmail"
         await q.message.reply_text(
             "📧 *ربط Gmail وإرسال CV*\n\n"
@@ -887,6 +896,11 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
     step    = ctx.user_data.get("step", "")
     text    = update.message.text or ""
+
+    # CV building takes priority
+    if step == "cv_building":
+        await cv_message_handler(update, ctx)
+        return
 
     if step == "waiting_gmail":
         if "@gmail.com" not in text:
@@ -1116,6 +1130,155 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle CV start from button."""
+    q       = update.callback_query
+    await q.answer()
+    chat_id = str(q.message.chat_id)
+    user    = get_user(chat_id)
+
+    # Check if user has CV plan or free (free gets basic CV)
+    await q.message.reply_text(
+        "📄 *إنشاء CV احترافي ATS*\n\n"
+        "سيساعدك البوت في بناء سيرة ذاتية احترافية\n"
+        "متوافقة مع أنظمة التوظيف الذكي (ATS)\n\n"
+        "اختر لغة الـ CV:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇸🇦 العربية", callback_data="cv_lang_ar")],
+            [InlineKeyboardButton("🇺🇸 English", callback_data="cv_lang_en")],
+            [InlineKeyboardButton("⬅️ رجوع",    callback_data="main_menu")],
+        ]),
+        parse_mode="Markdown"
+    )
+
+async def cv_lang_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Set CV language and start questions."""
+    q    = update.callback_query
+    await q.answer()
+    lang = "ar" if "ar" in q.data else "en"
+    ctx.user_data["cv_data"]  = {"lang": lang}
+    ctx.user_data["cv_step"]  = 1  # skip step 0 (lang)
+    ctx.user_data["cv_jobs"]  = []
+    ctx.user_data["step"]     = "cv_building"
+
+    steps   = CV_STEPS[lang]
+    step    = steps[1]
+    await q.message.reply_text(
+        f"✅ {'العربية' if lang=='ar' else 'English'}\n\n"
+        f"{'─'*25}\n"
+        f"*الخطوة 1/{len(steps)-1}*\n\n"
+        f"{step['q']}",
+        parse_mode="Markdown"
+    )
+
+async def cv_message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle CV building conversation. Returns True if handled."""
+    if ctx.user_data.get("step") != "cv_building":
+        return False
+
+    chat_id = str(update.effective_chat.id)
+    text    = update.message.text or ""
+    lang    = ctx.user_data.get("cv_data", {}).get("lang", "en")
+    steps   = CV_STEPS[lang]
+    step_i  = ctx.user_data.get("cv_step", 1)
+
+    if step_i >= len(steps):
+        return False
+
+    current_key = steps[step_i]["key"]
+    done_words  = ["done", "انتهيت", "انتهى"]
+
+    # ── Experience: collect multiple jobs ──────────
+    if current_key == "experience":
+        if text.strip().lower() in done_words:
+            ctx.user_data["cv_data"]["experience"] = ctx.user_data.get("cv_jobs", [])
+            ctx.user_data["cv_jobs"] = []
+            step_i += 1
+            ctx.user_data["cv_step"] = step_i
+        else:
+            ctx.user_data.setdefault("cv_jobs", []).append(text.strip())
+            count = len(ctx.user_data["cv_jobs"])
+            more  = "أضف وظيفة أخرى أو اكتب 'انتهيت'" if lang == "ar" else "Add another job or type 'done'"
+            await update.message.reply_text(
+                f"✅ تم حفظ الوظيفة {count}\n\n{more}",
+                parse_mode="Markdown"
+            )
+            return True
+
+    # ── Education: split by lines ──────────────────
+    elif current_key == "education":
+        ctx.user_data["cv_data"]["education"] = [l.strip() for l in text.split("\n") if l.strip()]
+        step_i += 1
+        ctx.user_data["cv_step"] = step_i
+
+    # ── Summary: AI generation ─────────────────────
+    elif current_key == "summary" and text.strip().lower() == "ai":
+        await update.message.reply_text("⏳ جاري كتابة النبذة المهنية بالـ AI...")
+        summary = generate_ai_summary(ctx.user_data["cv_data"], ai)
+        ctx.user_data["cv_data"]["summary"] = summary
+        step_i += 1
+        ctx.user_data["cv_step"] = step_i
+        await update.message.reply_text(
+            f"✅ *النبذة المهنية:*\n\n_{summary}_",
+            parse_mode="Markdown"
+        )
+
+    else:
+        ctx.user_data["cv_data"][current_key] = text.strip()
+        step_i += 1
+        ctx.user_data["cv_step"] = step_i
+
+    # ── Check if done ──────────────────────────────
+    if step_i >= len(steps):
+        await update.message.reply_text("⏳ جاري إنشاء الـ CV...")
+        try:
+            path = generate_cv_pdf(ctx.user_data["cv_data"], chat_id)
+            cv_name = "CV_فرصة.pdf" if lang == "ar" else "CV_FURSA.pdf"
+            with open(path, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename=cv_name,
+                    caption=(
+                        "✅ *تم إنشاء CV احترافي!*\n\n"
+                        "📄 الملف متوافق مع أنظمة ATS\n"
+                        "💡 يمكنك رفعه مباشرة على منصات التوظيف\n\n"
+                        "🔁 لإنشاء نسخة جديدة اضغط /cv"
+                    ),
+                    parse_mode="Markdown"
+                )
+            # Save CV path for auto-apply
+            update_user(chat_id, {"cv_path": path})
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ في إنشاء CV: {e}")
+
+        ctx.user_data["step"]    = ""
+        ctx.user_data["cv_step"] = 0
+        ctx.user_data["cv_data"] = {}
+        return True
+
+    # ── Next question ──────────────────────────────
+    next_step = steps[step_i]
+    total     = len(steps) - 1
+    progress  = f"الخطوة {step_i}/{total}" if lang == "ar" else f"Step {step_i}/{total}"
+
+    await update.message.reply_text(
+        f"✅\n\n{'─'*25}\n*{progress}*\n\n{next_step['q']}",
+        parse_mode="Markdown"
+    )
+    return True
+
+async def cv_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle /cv command."""
+    await update.message.reply_text(
+        "📄 *إنشاء CV احترافي ATS*\n\n"
+        "اختر لغة الـ CV:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🇸🇦 العربية", callback_data="cv_lang_ar")],
+            [InlineKeyboardButton("🇺🇸 English", callback_data="cv_lang_en")],
+        ]),
+        parse_mode="Markdown"
+    )
+
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
@@ -1125,6 +1288,7 @@ def main():
     app.add_handler(CommandHandler("search", search_cmd))
     app.add_handler(CommandHandler("myid",   myid_cmd))
     app.add_handler(CommandHandler("add",    add_cmd))
+    app.add_handler(CommandHandler("cv",     cv_cmd))
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
