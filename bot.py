@@ -1136,12 +1136,33 @@ async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     chat_id = str(q.message.chat_id)
     user    = get_user(chat_id)
+    plan    = user.get("plan", "free")
 
-    # Check if user has CV plan or free (free gets basic CV)
+    # Check if user has CV plan
+    if plan != "cv":
+        salla_cv = os.environ.get("SALLA_LINK_CV", "https://salla.sa")
+        await q.message.reply_text(
+            "📄 *خدمة إنشاء CV الذكي*\n\n"
+            "✅ CV احترافي متوافق مع ATS\n"
+            "✅ نسخة PDF جاهزة للتقديم\n"
+            "✅ نسخة Word قابلة للتعديل\n"
+            "✅ بالعربية أو الإنجليزية\n"
+            "✅ نبذة مهنية بالذكاء الاصطناعي\n\n"
+            f"💰 *السعر: 15 ريال فقط*\n\n"
+            f"👉 [اشترك الآن]({salla_cv})",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 اشترك — 15 ريال", url=salla_cv)],
+                [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")],
+            ]),
+            parse_mode="Markdown"
+        )
+        return
+
     await q.message.reply_text(
         "📄 *إنشاء CV احترافي ATS*\n\n"
-        "سيساعدك البوت في بناء سيرة ذاتية احترافية\n"
-        "متوافقة مع أنظمة التوظيف الذكي (ATS)\n\n"
+        "ستستلم نسختين:\n"
+        "📋 PDF — جاهز للتقديم مباشرة\n"
+        "✏️ Word — قابل للتعديل\n\n"
         "اختر لغة الـ CV:",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🇸🇦 العربية", callback_data="cv_lang_ar")],
@@ -1230,24 +1251,32 @@ async def cv_message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
     # ── Check if done ──────────────────────────────
     if step_i >= len(steps):
-        await update.message.reply_text("⏳ جاري إنشاء الـ CV...")
+        await update.message.reply_text("⏳ جاري إنشاء CV بصيغتين...")
         try:
-            path = generate_cv_pdf(ctx.user_data["cv_data"], chat_id)
-            cv_name = "CV_فرصة.pdf" if lang == "ar" else "CV_FURSA.pdf"
-            with open(path, "rb") as f:
+            from cv_builder import generate_cv_pdf, generate_cv_docx
+            pdf_path  = generate_cv_pdf(ctx.user_data["cv_data"], chat_id)
+            docx_path = generate_cv_docx(ctx.user_data["cv_data"], chat_id)
+            lang      = ctx.user_data["cv_data"].get("lang","en")
+            is_ar     = lang == "ar"
+
+            # Send PDF
+            with open(pdf_path, "rb") as f:
                 await update.message.reply_document(
                     document=f,
-                    filename=cv_name,
-                    caption=(
-                        "✅ *تم إنشاء CV احترافي!*\n\n"
-                        "📄 الملف متوافق مع أنظمة ATS\n"
-                        "💡 يمكنك رفعه مباشرة على منصات التوظيف\n\n"
-                        "🔁 لإنشاء نسخة جديدة اضغط /cv"
-                    ),
+                    filename="CV_فرصة.pdf" if is_ar else "CV_FURSA.pdf",
+                    caption="📄 *النسخة الجاهزة* — PDF متوافق مع ATS" if is_ar else "📄 *Ready Version* — ATS-friendly PDF",
+                    parse_mode="Markdown"
+                )
+            # Send DOCX
+            with open(docx_path, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename="CV_فرصة.docx" if is_ar else "CV_FURSA.docx",
+                    caption="✏️ *نسخة قابلة للتعديل* — Word للتخصيص اليدوي" if is_ar else "✏️ *Editable Version* — Word for manual editing",
                     parse_mode="Markdown"
                 )
             # Save CV path for auto-apply
-            update_user(chat_id, {"cv_path": path})
+            update_user(chat_id, {"cv_path": pdf_path})
         except Exception as e:
             await update.message.reply_text(f"❌ خطأ في إنشاء CV: {e}")
 
