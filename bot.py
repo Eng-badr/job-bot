@@ -18,6 +18,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, MessageHandler,
                            filters, ContextTypes, CallbackQueryHandler)
 from cv_builder import CV_STEPS, generate_cv_pdf, generate_ai_summary
+from salla_webhook import start_webhook_server, PLAN_NAMES
 
 # ══════════════════════════════════════════════════════
 #  LOGGING
@@ -1308,21 +1309,79 @@ async def cv_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def activate_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Admin: manually activate a plan. Usage: /activate CHAT_ID plan_key"""
+    admin_id = os.environ.get("ADMIN_CHAT_ID", "")
+    chat_id  = str(update.effective_chat.id)
+    if chat_id != admin_id:
+        await update.message.reply_text("⛔ للمشرف فقط.")
+        return
+
+    args = ctx.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "الاستخدام:\n`/activate CHAT_ID plan_key`\n\n"
+            "مثال:\n`/activate 861299802 basic`\n\n"
+            "الباقات: free / basic / pro / elite / cv",
+            parse_mode="Markdown"
+        )
+        return
+
+    target_id = args[0]
+    plan_key  = args[1].lower()
+
+    valid_plans = ["free", "basic", "pro", "elite", "cv"]
+    if plan_key not in valid_plans:
+        await update.message.reply_text(f"❌ باقة غير صحيحة. الباقات: {', '.join(valid_plans)}")
+        return
+
+    update_user(target_id, {
+        "plan":          plan_key,
+        "plan_since":    datetime.now().isoformat(),
+        "applied_count": 0,
+    })
+
+    plan_name = PLAN_NAMES.get(plan_key, plan_key)
+
+    # Notify target user
+    try:
+        msg = (
+            f"🎉 *تم تفعيل باقتك!*\n\n"
+            f"💎 *الباقة:* {plan_name}\n"
+            f"📅 *التاريخ:* {datetime.now().strftime('%Y/%m/%d')}\n\n"
+            f"{'🚀 البوت سيبدأ التقديم عنك تلقائياً!' if plan_key != 'cv' else '📄 اضغط /cv لإنشاء سيرتك الذاتية'}\n"
+            f"اضغط /start للقائمة الرئيسية"
+        )
+        await ctx.bot.send_message(chat_id=int(target_id), text=msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Notify error: {e}")
+
+    await update.message.reply_text(
+        f"✅ تم تفعيل *{plan_name}* للمستخدم `{target_id}`",
+        parse_mode="Markdown"
+    )
+
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start",  start))
-    app.add_handler(CommandHandler("search", search_cmd))
-    app.add_handler(CommandHandler("myid",   myid_cmd))
-    app.add_handler(CommandHandler("add",    add_cmd))
-    app.add_handler(CommandHandler("cv",     cv_cmd))
+    app.add_handler(CommandHandler("start",    start))
+    app.add_handler(CommandHandler("search",   search_cmd))
+    app.add_handler(CommandHandler("myid",     myid_cmd))
+    app.add_handler(CommandHandler("add",      add_cmd))
+    app.add_handler(CommandHandler("cv",       cv_cmd))
+    app.add_handler(CommandHandler("activate", activate_cmd))
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
+
+    # Start Salla Webhook Server
+    port = int(os.environ.get("PORT", "8080"))
+    start_webhook_server(app, load_data, save_data, update_user, port)
+
     logger.info("🤖 بوت الوظائف الذكي v3.0 — يعمل!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
