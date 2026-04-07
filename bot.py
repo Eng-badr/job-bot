@@ -767,16 +767,19 @@ def spec_subs_kb(cat: str, selected: list) -> InlineKeyboardMarkup:
     buttons.append([InlineKeyboardButton("⬅️ رجوع", callback_data="ob_start")])
     return InlineKeyboardMarkup(buttons)
 
-def edu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(o, callback_data=f"edu_{o}")]
-        for o in ["ثانوية", "دبلوم", "بكالوريوس", "ماجستير", "دكتوراه"]
-    ])
+EXP_OPTIONS = ["أقل من سنة", "1-3 سنوات", "3-5 سنوات", "5-10 سنوات", "أكثر من 10 سنوات"]
+EDU_OPTIONS = ["ثانوية", "دبلوم", "بكالوريوس", "ماجستير", "دكتوراه"]
 
 def exp_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(o, callback_data=f"exp_{o}")]
-        for o in ["أقل من سنة", "1-3 سنوات", "3-5 سنوات", "5-10 سنوات", "أكثر من 10 سنوات"]
+        [InlineKeyboardButton(o, callback_data=f"exp_{i}")]
+        for i, o in enumerate(EXP_OPTIONS)
+    ])
+
+def edu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(o, callback_data=f"edu_{i}")]
+        for i, o in enumerate(EDU_OPTIONS)
     ])
 
 def cities_kb(selected: list) -> InlineKeyboardMarkup:
@@ -903,17 +906,27 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("edu_"):
-        ctx.user_data["edu"] = data[4:]
+        try:
+            idx = int(data[4:])
+            edu_val = EDU_OPTIONS[idx]
+        except (ValueError, IndexError):
+            edu_val = data[4:]
+        ctx.user_data["edu"] = edu_val
         await q.message.reply_text(
-            f"✅ المؤهل: *{data[4:]}*\n\nالخطوة 3/4 — كم سنة خبرتك؟",
+            f"✅ المؤهل: *{edu_val}*\n\nالخطوة 3/4 — كم سنة خبرتك؟",
             reply_markup=exp_kb(), parse_mode="Markdown"
         )
 
     elif data.startswith("exp_"):
-        ctx.user_data["exp"] = data[4:]
+        try:
+            idx = int(data[4:])
+            exp_val = EXP_OPTIONS[idx]
+        except (ValueError, IndexError):
+            exp_val = data[4:]
+        ctx.user_data["exp"] = exp_val
         sel = ctx.user_data.get("sel_cities", [])
         await q.message.reply_text(
-            f"✅ الخبرة: *{data[4:]}*\n\nالخطوة 4/4 — اختر مدنك المفضلة (يمكنك اختيار أكثر من واحدة):",
+            f"✅ الخبرة: *{exp_val}*\n\nالخطوة 4/4 — اختر مدنك المفضلة (يمكنك اختيار أكثر من واحدة):",
             reply_markup=cities_kb(sel), parse_mode="Markdown"
         )
 
