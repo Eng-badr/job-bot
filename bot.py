@@ -760,9 +760,9 @@ def spec_cats_kb() -> InlineKeyboardMarkup:
 def spec_subs_kb(cat: str, selected: list) -> InlineKeyboardMarkup:
     subs    = SPECIALIZATIONS[cat]["subs"]
     buttons = []
-    for s in subs:
+    for i, s in enumerate(subs):
         check = "✅ " if s in selected else ""
-        buttons.append([InlineKeyboardButton(f"{check}{s}", callback_data=f"spec_{s}")])
+        buttons.append([InlineKeyboardButton(f"{check}{s}", callback_data=f"spec_{i}_{cat}")])
     buttons.append([InlineKeyboardButton("✔️ التالي ←", callback_data="spec_done")])
     buttons.append([InlineKeyboardButton("⬅️ رجوع", callback_data="ob_start")])
     return InlineKeyboardMarkup(buttons)
@@ -781,9 +781,9 @@ def exp_kb() -> InlineKeyboardMarkup:
 
 def cities_kb(selected: list) -> InlineKeyboardMarkup:
     buttons = []
-    for c in CITIES:
+    for i, c in enumerate(CITIES):
         check = "✅ " if c in selected else ""
-        buttons.append([InlineKeyboardButton(f"{check}{c}", callback_data=f"city_{c}")])
+        buttons.append([InlineKeyboardButton(f"{check}{c}", callback_data=f"city_{i}")])
     buttons.append([InlineKeyboardButton("✔️ إنشاء الملف ←", callback_data="city_done")])
     return InlineKeyboardMarkup(buttons)
 
@@ -877,7 +877,13 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("spec_") and data != "spec_done":
-        spec = data[5:]
+        parts = data[5:].split("_", 1)
+        try:
+            spec_idx = int(parts[0])
+            cat      = parts[1] if len(parts) > 1 else ctx.user_data.get("cat", "tech")
+            spec     = SPECIALIZATIONS[cat]["subs"][spec_idx]
+        except (ValueError, IndexError):
+            spec = data[5:]
         sel  = ctx.user_data.get("sel_specs", [])
         if spec in sel:
             sel.remove(spec)
@@ -885,9 +891,7 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             sel.append(spec)
         ctx.user_data["sel_specs"] = sel
         cat = ctx.user_data.get("cat", "tech")
-        await q.message.edit_reply_markup(
-            reply_markup=spec_subs_kb(cat, sel)
-        )
+        await q.message.edit_reply_markup(reply_markup=spec_subs_kb(cat, sel))
 
     elif data == "spec_done":
         if not ctx.user_data.get("sel_specs"):
@@ -914,7 +918,11 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("city_") and data != "city_done":
-        city = data[5:]
+        try:
+            city_idx = int(data[5:])
+            city = CITIES[city_idx]
+        except (ValueError, IndexError):
+            city = data[5:]  # fallback
         sel  = ctx.user_data.get("sel_cities", [])
         if city in sel:
             sel.remove(city)
