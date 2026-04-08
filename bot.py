@@ -40,11 +40,11 @@ os.makedirs(CV_DIR, exist_ok=True)
 
 # ── Subscription plans ──────────────────────────────
 PLANS = {
-    "free":  {"name": "🆓 المجاني",  "price": 0,  "auto_apply": False, "max_jobs": 0,    "desc": "يعرض الوظائف وتقدم بنفسك"},
-    "basic": {"name": "⚡ الأساسي", "price": 24, "auto_apply": True,  "max_jobs": 200,  "desc": "تقديم تلقائي على 200 وظيفة"},
-    "pro":   {"name": "🚀 المتقدم", "price": 34, "auto_apply": True,  "max_jobs": 500,  "desc": "تقديم تلقائي على 500 وظيفة"},
-    "elite": {"name": "👑 النخبة",  "price": 49, "auto_apply": True,  "max_jobs": 1000, "desc": "تقديم تلقائي على 1000 وظيفة"},
-    "cv":    {"name": "📄 CV ذكي",  "price": 15, "auto_apply": False, "max_jobs": 0,    "desc": "إنشاء CV احترافي ATS بالعربي أو الإنجليزي"},
+    "free":  {"name": "🆓 المجاني",  "price": 0,  "auto_apply": False, "max_jobs": 0,    "cv": False, "desc": "بحث تلقائي عن وظائف مجاناً"},
+    "basic": {"name": "⚡ الأساسي", "price": 24, "auto_apply": True,  "max_jobs": 200,  "cv": False, "desc": "تقديم تلقائي على 200 وظيفة"},
+    "pro":   {"name": "🚀 المتقدم", "price": 34, "auto_apply": True,  "max_jobs": 500,  "cv": False, "desc": "تقديم تلقائي على 500 وظيفة"},
+    "elite": {"name": "👑 النخبة",  "price": 49, "auto_apply": True,  "max_jobs": 1000, "cv": True,  "desc": "تقديم تلقائي على 1000 وظيفة + CV ذكي مجاناً"},
+    "cv":    {"name": "📄 CV ذكي",  "price": 15, "auto_apply": False, "max_jobs": 0,    "cv": True,  "desc": "إنشاء CV احترافي ATS بالعربي أو الإنجليزي"},
 }
 
 # ── Specializations ─────────────────────────────────
@@ -599,12 +599,19 @@ def run_job_search(chat_id: str, app, manual: bool = False):
             if ok:
                 auto_applied = True
                 applied += 1
-                card += f"\n\n🤖 *تم إرسال طلب التقديم بالإيميل عنك!*"
+                card += (
+                    f"\n\n{'━'*22}\n"
+                    f"🤖 *تم التقديم عنك تلقائياً!*\n"
+                    f"📧 أرسلنا طلبك مع خطاب احترافي\n"
+                    f"📊 إجمالي تقديماتك: *{applied}*"
+                )
 
         try:
             import asyncio
+            # Add header to distinguish found vs applied
+            header = "✅ *وظيفة جديدة مناسبة لك!*\n" if not auto_applied else "🚀 *وظيفة قدّمنا عليها عنك!*\n"
             asyncio.run(app.bot.send_message(
-                chat_id=int(chat_id), text=card,
+                chat_id=int(chat_id), text=header + card,
                 parse_mode="Markdown", disable_web_page_preview=False
             ))
             found += 1
@@ -840,13 +847,13 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🤖 *ماذا يفعل البوت؟*\n\n"
             f"🔍 يبحث تلقائياً عن وظائف تناسبك\n"
-            f"   في مصادر متعددة كل 6 ساعات\n\n"
+            f"   كل 6 ساعات — *مجاناً* 🆓\n\n"
             f"🧠 يحلل كل وظيفة بالذكاء الاصطناعي\n"
             f"   ويرسل لك فقط المناسب لتخصصك\n\n"
             f"📧 يقدم عنك تلقائياً بخطاب احترافي\n"
-            f"   على وظائف التقديم بالإيميل\n\n"
-            f"🔗 يرسل لك رابط الوظائف الأخرى\n"
-            f"   لتقدم عليها بنفسك\n\n"
+            f"   على وظائف الإيميل — *بالباقات المدفوعة*\n\n"
+            f"📄 ينشئ CV احترافي ATS\n"
+            f"   بالعربي أو الإنجليزي — *15 ريال*\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🚀 ابدأ الآن — أنشئ ملفك في دقيقتين!"
         )
@@ -983,11 +990,26 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── Plans ────────────────────────────────────────
     elif data == "show_plans":
         cur  = user.get("plan", "free")
-        text = "💎 *الباقات والاشتراكات*\n\n"
-        for k, p in PLANS.items():
-            badge = " ✅ *باقتك الحالية*" if k == cur else ""
-            price = "مجاني" if p["price"] == 0 else f"{p['price']} ريال"
-            text += f"{p['name']}{badge}\n├ 💰 {price}\n├ 📋 {p['desc']}\n└ {'─'*22}\n\n"
+        text = (
+            "💎 *الباقات والاشتراكات*\n\n"
+            "🆓 *المجاني — مجاناً*\n"
+            "├ ✅ بحث تلقائي عن وظائف كل 6 ساعات\n"
+            "└ ❌ بدون تقديم تلقائي\n\n"
+            "⚡ *الأساسي — 24 ريال*\n"
+            "├ ✅ بحث تلقائي\n"
+            "└ ✅ تقديم تلقائي على 200 وظيفة\n\n"
+            "🚀 *المتقدم — 34 ريال*\n"
+            "├ ✅ بحث تلقائي\n"
+            "└ ✅ تقديم تلقائي على 500 وظيفة\n\n"
+            "👑 *النخبة — 49 ريال*\n"
+            "├ ✅ بحث تلقائي\n"
+            "├ ✅ تقديم تلقائي على 1000 وظيفة\n"
+            "└ ✅ CV ذكي مجاناً 🎁\n\n"
+            "📄 *CV ذكي — 15 ريال*\n"
+            "└ ✅ سيرة ذاتية PDF + Word\n\n"
+            f"{'─'*28}\n"
+            f"💎 باقتك الحالية: *{PLANS.get(cur, PLANS['free'])['name']}*"
+        )
         await q.message.reply_text(text, reply_markup=plans_kb(), parse_mode="Markdown")
 
     elif data.startswith("plan_"):
@@ -1348,8 +1370,8 @@ async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user    = get_user(chat_id)
     plan    = user.get("plan", "free")
 
-    # Check if user has CV plan
-    if plan != "cv":
+    # Check if user has CV plan or elite
+    if not PLANS.get(plan, {}).get("cv", False):
         salla_cv = os.environ.get("SALLA_LINK_CV", "https://salla.sa")
         await q.message.reply_text(
             "📄 *خدمة إنشاء CV الذكي*\n\n"
