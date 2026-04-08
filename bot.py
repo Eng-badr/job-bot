@@ -1519,7 +1519,7 @@ async def cv_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def activate_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Admin: manually activate a plan. Usage: /activate CHAT_ID plan_key"""
+    """Admin: manually activate a plan."""
     admin_id = os.environ.get("ADMIN_CHAT_ID", "")
     chat_id  = str(update.effective_chat.id)
     if chat_id != admin_id:
@@ -1529,9 +1529,13 @@ async def activate_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     args = ctx.args
     if len(args) < 2:
         await update.message.reply_text(
-            "الاستخدام:\n`/activate CHAT_ID plan_key`\n\n"
-            "مثال:\n`/activate 861299802 basic`\n\n"
-            "الباقات: free / basic / pro / elite / cv",
+            "📋 *أوامر التفعيل:*\n\n"
+            "`/activate CHAT_ID basic` — الأساسية 24ر\n"
+            "`/activate CHAT_ID pro` — المتقدمة 34ر\n"
+            "`/activate CHAT_ID elite` — النخبة 49ر\n"
+            "`/activate CHAT_ID cv` — CV ذكي 15ر\n"
+            "`/activate CHAT_ID free` — إلغاء الباقة\n\n"
+            "مثال:\n`/activate 861299802 elite`",
             parse_mode="Markdown"
         )
         return
@@ -1551,23 +1555,153 @@ async def activate_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     })
 
     plan_name = PLAN_NAMES.get(plan_key, plan_key)
+    plan_info = PLANS.get(plan_key, {})
 
-    # Notify target user
+    # ── رسالة ترحيب للمستخدم ──────────────────────
+    welcome_msgs = {
+        "basic": (
+            "🎉 *تم تفعيل باقتك بنجاح!*\n\n"
+            "⚡ *الباقة الأساسية — 24 ريال*\n"
+            "{'━'*28}\n\n"
+            "✅ البوت سيبحث عنك تلقائياً كل 6 ساعات\n"
+            "✅ تقديم تلقائي على 200 وظيفة\n"
+            "✅ خطاب تقديم احترافي بالذكاء الاصطناعي\n"
+            "✅ إشعار فوري بكل فرصة مناسبة\n\n"
+            "🚀 *البوت بدأ يعمل لصالحك الآن!*\n"
+            "اضغط /start لرؤية القائمة الرئيسية"
+        ),
+        "pro": (
+            "🎉 *تم تفعيل باقتك بنجاح!*\n\n"
+            "🚀 *الباقة المتقدمة — 34 ريال*\n\n"
+            "✅ البوت سيبحث عنك تلقائياً كل 6 ساعات\n"
+            "✅ تقديم تلقائي على 500 وظيفة\n"
+            "✅ خطاب تقديم احترافي بالذكاء الاصطناعي\n"
+            "✅ إشعار فوري بكل فرصة مناسبة\n\n"
+            "🚀 *البوت بدأ يعمل لصالحك الآن!*\n"
+            "اضغط /start لرؤية القائمة الرئيسية"
+        ),
+        "elite": (
+            "🎉 *تم تفعيل باقتك بنجاح!*\n\n"
+            "👑 *باقة النخبة — 49 ريال*\n\n"
+            "✅ البوت سيبحث عنك تلقائياً كل 6 ساعات\n"
+            "✅ تقديم تلقائي على 1000 وظيفة\n"
+            "✅ خطاب تقديم احترافي بالذكاء الاصطناعي\n"
+            "✅ أولوية في إشعارات الوظائف\n\n"
+            "👑 *أنت الآن في النخبة! البوت يعمل لصالحك.*\n"
+            "اضغط /start لرؤية القائمة الرئيسية"
+        ),
+        "cv": (
+            "🎉 *تم تفعيل خدمة CV الذكي!*\n\n"
+            "📄 *CV ذكي — 15 ريال*\n\n"
+            "✅ سيرة ذاتية احترافية ATS\n"
+            "✅ بالعربية أو الإنجليزية\n"
+            "✅ نسخة PDF جاهزة للتقديم\n"
+            "✅ نسخة Word قابلة للتعديل\n\n"
+            "📄 *ابدأ إنشاء CV الآن:*\n"
+            "اضغط /cv أو اضغط /start واختر 'أنشئ CV احترافي'"
+        ),
+        "free": (
+            "✅ *تم تعديل الباقة*\n\n"
+            "تم تحويل حسابك للباقة المجانية.\n"
+            "اضغط /start للقائمة الرئيسية."
+        ),
+    }
+
     try:
-        msg = (
-            f"🎉 *تم تفعيل باقتك!*\n\n"
-            f"💎 *الباقة:* {plan_name}\n"
-            f"📅 *التاريخ:* {datetime.now().strftime('%Y/%m/%d')}\n\n"
-            f"{'🚀 البوت سيبدأ التقديم عنك تلقائياً!' if plan_key != 'cv' else '📄 اضغط /cv لإنشاء سيرتك الذاتية'}\n"
-            f"اضغط /start للقائمة الرئيسية"
+        user_msg = welcome_msgs.get(plan_key, f"✅ تم تفعيل {plan_name}")
+        await ctx.bot.send_message(
+            chat_id=int(target_id),
+            text=user_msg,
+            parse_mode="Markdown"
         )
-        await ctx.bot.send_message(chat_id=int(target_id), text=msg, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Notify error: {e}")
 
+    # ── تأكيد للأدمن ──────────────────────────────
+    target_user = get_user(target_id)
+    target_name = target_user.get("name", target_id)
     await update.message.reply_text(
-        f"✅ تم تفعيل *{plan_name}* للمستخدم `{target_id}`",
+        f"✅ *تم التفعيل بنجاح!*\n\n"
+        f"👤 المستخدم: {target_name}\n"
+        f"🆔 Chat ID: `{target_id}`\n"
+        f"💎 الباقة: {plan_name}\n"
+        f"📅 التاريخ: {datetime.now().strftime('%Y/%m/%d %H:%M')}",
         parse_mode="Markdown"
+    )
+
+async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Admin dashboard with full statistics."""
+    admin_id = os.environ.get("ADMIN_CHAT_ID", "")
+    chat_id  = str(update.effective_chat.id)
+    if chat_id != admin_id:
+        await update.message.reply_text("⛔ للمشرف فقط.")
+        return
+
+    data  = load_data()
+    users = {k: v for k, v in data.items() if k != "pending_activations" and isinstance(v, dict)}
+    total = len(users)
+
+    # إحصائيات الباقات
+    plan_counts = {"free": 0, "basic": 0, "pro": 0, "elite": 0, "cv": 0}
+    has_profile = 0
+    has_gmail   = 0
+    total_jobs  = 0
+    total_applied = 0
+    new_today   = 0
+    today_str   = datetime.now().strftime("%Y-%m-%d")
+    spec_counter = {}
+
+    for uid, info in users.items():
+        plan = info.get("plan", "free")
+        plan_counts[plan] = plan_counts.get(plan, 0) + 1
+
+        if info.get("profile", {}).get("specializations"):
+            has_profile += 1
+            for s in info["profile"]["specializations"]:
+                spec_counter[s] = spec_counter.get(s, 0) + 1
+
+        if info.get("gmail"):
+            has_gmail += 1
+
+        total_jobs    += len(info.get("seen_jobs", []))
+        total_applied += info.get("applied_count", 0)
+
+        joined = info.get("joined", "")
+        if joined and joined.startswith(today_str):
+            new_today += 1
+
+    # أكثر التخصصات
+    top_specs = sorted(spec_counter.items(), key=lambda x: x[1], reverse=True)[:5]
+    specs_text = "\n".join(f"   {i+1}. {s} ({c})" for i, (s, c) in enumerate(top_specs))
+
+    msg = (
+        f"📊 *لوحة تحكم فرصة | FURSA*\n"
+        f"{'━'*30}\n\n"
+        f"👥 *المستخدمون*\n"
+        f"   إجمالي: *{total}*\n"
+        f"   جدد اليوم: *{new_today}* 🆕\n"
+        f"   لديهم ملف: *{has_profile}*\n"
+        f"   ربطوا Gmail: *{has_gmail}*\n\n"
+        f"💎 *الباقات*\n"
+        f"   🆓 مجاني: *{plan_counts['free']}*\n"
+        f"   ⚡ أساسي: *{plan_counts['basic']}*\n"
+        f"   🚀 متقدم: *{plan_counts['pro']}*\n"
+        f"   👑 نخبة: *{plan_counts['elite']}*\n"
+        f"   📄 CV ذكي: *{plan_counts['cv']}*\n\n"
+        f"📈 *النشاط*\n"
+        f"   وظائف فُحصت: *{total_jobs}*\n"
+        f"   تقديمات أُرسلت: *{total_applied}*\n\n"
+        f"🏆 *أكثر التخصصات*\n{specs_text or '   — لا بيانات بعد'}\n\n"
+        f"{'━'*30}\n"
+        f"🕐 {datetime.now().strftime('%Y/%m/%d %H:%M')}"
+    )
+
+    await update.message.reply_text(
+        msg,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 تحديث", callback_data="admin_refresh")],
+        ])
     )
 
 # ══════════════════════════════════════════════════════
@@ -1581,6 +1715,7 @@ def main():
     app.add_handler(CommandHandler("add",      add_cmd))
     app.add_handler(CommandHandler("cv",       cv_cmd))
     app.add_handler(CommandHandler("activate", activate_cmd))
+    app.add_handler(CommandHandler("admin",    admin_cmd))
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
