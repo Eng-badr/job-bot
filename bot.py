@@ -570,7 +570,14 @@ def run_job_search(chat_id: str, app, manual: bool = False):
     app_pwd     = user.get("app_password", "")
     cv_path     = user.get("cv_path", "")
     user_name   = user.get("name", "المتقدم")
-    can_apply   = plan["auto_apply"] and gmail and app_pwd and applied < plan["max_jobs"]
+    can_apply   = (
+        plan["auto_apply"] and
+        gmail and
+        app_pwd and
+        applied < plan["max_jobs"] and
+        plan["max_jobs"] > 0
+    )
+    logger.info(f"can_apply={can_apply} plan={plan_key} gmail={'✅' if gmail else '❌'} pwd={'✅' if app_pwd else '❌'} applied={applied}/{plan.get('max_jobs',0)}")
 
     for job in all_jobs:
         job_id = f"{job.get('title','').lower()}|{job.get('company','').lower()}"
@@ -648,10 +655,43 @@ def job_search_loop(app):
     while True:
         data = load_data()
         for cid, info in data.items():
-            if info.get("profile", {}).get("specializations"):
-                if time.time() - info.get("last_job_search", 0) >= JOB_SEARCH_INTERVAL:
-                    logger.info(f"⏰ Auto search: {cid}")
-                    run_job_search(cid, app)
+            if not isinstance(info, dict):
+                continue
+            if not info.get("profile", {}).get("specializations"):
+                continue
+            last = info.get("last_job_search", 0)
+            if time.time() - last >= JOB_SEARCH_INTERVAL:
+                logger.info(f"⏰ Auto search: {cid}")
+                # أرسل تنبيه قبل البحث
+                try:
+                    import asyncio
+                    asyncio.run(app.bot.send_message(
+                        chat_id=int(cid),
+                        text=(
+                            "🔍 *جاري البحث عن وظائف جديدة...*\n\n"
+                            "⏳ أبحث لك الآن في المصادر المتاحة\n"
+                            "سأرسل لك الوظائف المناسبة فور العثور عليها!"
+                        ),
+                        parse_mode="Markdown"
+                    ))
+                except:
+                    pass
+                found = run_job_search(cid, app)
+                # أرسل ملخص نتيجة البحث
+                try:
+                    import asyncio
+                    if found == 0:
+                        asyncio.run(app.bot.send_message(
+                            chat_id=int(cid),
+                            text=(
+                                "🔍 *انتهى البحث*\n\n"
+                                "لم أجد وظائف جديدة مناسبة هذه المرة.\n"
+                                "⏰ سأبحث مجدداً بعد 6 ساعات."
+                            ),
+                            parse_mode="Markdown"
+                        ))
+                except:
+                    pass
         time.sleep(1800)
 
 def email_monitor_loop(app):
@@ -970,11 +1010,17 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "experience":      ctx.user_data.get("exp", ""),
             "cities":          ctx.user_data.get("sel_cities", []),
         }
-        update_user(chat_id, {"profile": profile, "plan": "free", "applied_count": 0})
+        # ✅ نضبط last_job_search الحين عشان ما يبحث فوراً
+        update_user(chat_id, {
+            "profile":          profile,
+            "plan":             get_user(chat_id).get("plan", "free"),
+            "applied_count":    0,
+            "last_job_search":  time.time(),  # يبدأ العداد من الآن
+        })
         specs_text  = "\n".join(f"   • {s}" for s in profile["specializations"])
         cities_text = "، ".join(profile["cities"])
         await q.message.reply_text(
-            f"🎉 *تم إنشاء ملفك الوظيفي!*\n\n"
+            f"🎉 *تم إنشاء ملفك الوظيفي بنجاح!*\n\n"
             f"👤 *ملخص ملفك:*\n"
             f"{'─'*28}\n"
             f"💼 *التخصصات:*\n{specs_text}\n"
@@ -982,8 +1028,9 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"📅 الخبرة: {profile['experience']}\n"
             f"📍 المدن: {cities_text}\n"
             f"{'─'*28}\n\n"
-            f"🟢 البوت سيبحث لك كل 6 ساعات في 8 مصادر!\n"
-            f"💡 *الخطوة التالية:* أرسل CV لتفعيل التقديم التلقائي",
+            f"🟢 *البوت سيبحث لك أول مرة بعد 6 ساعات*\n"
+            f"🔍 أو اضغط 'ابحث عن وظائف الآن' للبحث فوراً\n\n"
+            f"💡 *الخطوة التالية:* ارفع CV لتفعيل التقديم التلقائي",
             reply_markup=main_kb(True), parse_mode="Markdown"
         )
 
