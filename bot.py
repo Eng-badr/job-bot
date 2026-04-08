@@ -1080,6 +1080,8 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("cv_lang_"):
         await cv_lang_btn(update, ctx)
         return
+
+    elif data == "setup_email":
         ctx.user_data["step"] = "waiting_gmail"
         await q.message.reply_text(
             "📧 *ربط Gmail وإرسال CV*\n\n"
@@ -1090,6 +1092,14 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "أرسل عنوان Gmail الخاص بك:",
             parse_mode="Markdown",
             disable_web_page_preview=False
+        )
+
+    elif data == "main_menu":
+        has_profile = bool(get_user(chat_id).get("profile", {}).get("specializations"))
+        await q.message.reply_text(
+            "🏠 القائمة الرئيسية:",
+            reply_markup=main_kb(has_profile),
+            parse_mode="Markdown"
         )
 
 async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
