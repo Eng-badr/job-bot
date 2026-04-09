@@ -650,7 +650,162 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 # ══════════════════════════════════════════════════════
 #  BACKGROUND LOOPS
 # ══════════════════════════════════════════════════════
-def job_search_loop(app):
+def channel_poll_loop(app):
+    """يقرأ القناة كل 5 دقائق ويعالج الوظائف الجديدة."""
+    import asyncio
+    time.sleep(60)
+    last_message_id = 0
+
+    while True:
+        try:
+            channel_id = os.environ.get("JOBS_CHANNEL_ID", "")
+            if not channel_id:
+                time.sleep(300)
+                continue
+
+            # نجيب آخر رسائل القناة
+            url = (
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+                f"/getUpdates?allowed_updates=[\"channel_post\"]&offset=-10&limit=10"
+            )
+            req  = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+
+            if not data.get("ok"):
+                time.sleep(300)
+                continue
+
+            for update in data.get("result", []):
+                post = update.get("channel_post", {})
+                if not post:
+                    continue
+
+                msg_id   = post.get("message_id", 0)
+                chat     = post.get("chat", {})
+                chat_id  = chat.get("id", 0)
+                text     = post.get("text", "") or post.get("caption", "")
+
+                # تحقق من القناة الصحيحة
+                if str(chat_id) != str(channel_id):
+                    continue
+
+                # تجنب معالجة نفس الرسالة مرتين
+                if msg_id <= last_message_id:
+                    continue
+
+                last_message_id = msg_id
+
+                if not text or len(text) < 20:
+                    continue
+
+                logger.info(f"📢 New channel job detected: {text[:50]}")
+
+                # معالجة الوظيفة
+                analysis = ai_json(f"""
+حلّل هذا الإعلان الوظيفي:
+{text}
+
+أجب بـ JSON فقط:
+{{
+  "title": "المسمى الوظيفي",
+  "company": "اسم الشركة",
+  "location": "الموقع",
+  "desc": "وصف مختصر",
+  "apply_target": "الإيميل أو الرابط"
+}}
+""", max_tokens=300)
+
+                if not analysis:
+                    continue
+
+                job = {
+                    "title":       analysis.get("title", "وظيفة جديدة"),
+                    "company":     analysis.get("company", ""),
+                    "location":    analysis.get("location", "السعودية"),
+                    "desc":        analysis.get("desc", text[:300]),
+                    "link":        analysis.get("apply_target","") if "http" in analysis.get("apply_target","") else "",
+                    "email_apply": analysis.get("apply_target","") if "@" in analysis.get("apply_target","") else "",
+                    "source":      "📢 قناة فرصة",
+                }
+
+                users_data = load_data()
+                sent = 0
+
+                for uid, info in users_data.items():
+                    if not isinstance(info, dict):
+                        continue
+                    profile = info.get("profile", {})
+                    if not profile.get("specializations"):
+                        continue
+
+                    result = analyze_job(job, profile)
+                    if not result:
+                        continue
+
+                    stars  = "⭐" * min(int(result.get("score", 7)), 10)
+                    target = analysis.get("apply_target", "")
+                    apply_line = ""
+                    if "@" in target:
+                        apply_line = f"\n📧 *للتقديم:* `{target}`"
+                    elif "http" in target:
+                        apply_line = f"\n🔗 *للتقديم:* [اضغط هنا]({target})"
+
+                    msg = (
+                        f"📢 *وظيفة جديدة من قناة فرصة!*\n"
+                        f"{'━'*26}\n"
+                        f"💼 *{job['title']}*\n"
+                        f"🏢 {job['company']}  |  📍 {job['location']}\n"
+                        f"{'━'*26}\n"
+                        f"✨ {result.get('reason','مناسب لتخصصك')}\n"
+                        f"📊 {stars} ({result.get('score',7)}/10)"
+                        f"{apply_line}"
+                    )
+
+                    # تقديم تلقائي
+                    user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
+                    gmail     = info.get("gmail","")
+                    app_pwd   = info.get("app_password","")
+                    applied   = info.get("applied_count", 0)
+
+                    if (user_plan["auto_apply"] and gmail and app_pwd and
+                            "@" in target and applied < user_plan.get("max_jobs", 0)):
+                        cover = generate_cover_letter(job, result, profile, info.get("name","المتقدم"))
+                        ok = send_application_email(
+                            gmail, app_pwd, target,
+                            job["title"], job["company"], cover,
+                            info.get("cv_path"), info.get("name","المتقدم")
+                        )
+                        if ok:
+                            msg += f"\n\n🤖 *تم التقديم عنك تلقائياً!*"
+                            update_user(uid, {"applied_count": applied + 1})
+
+                    try:
+                        asyncio.run(app.bot.send_message(
+                            chat_id=int(uid), text=msg,
+                            parse_mode="Markdown", disable_web_page_preview=False
+                        ))
+                        sent += 1
+                    except Exception as e:
+                        logger.error(f"Channel send error {uid}: {e}")
+
+                logger.info(f"📢 Channel job sent to {sent} users: {job['title']}")
+
+                # إشعار الأدمن
+                admin_id = os.environ.get("ADMIN_CHAT_ID","")
+                if admin_id and sent > 0:
+                    try:
+                        asyncio.run(app.bot.send_message(
+                            chat_id=int(admin_id),
+                            text=f"📢 وظيفة من القناة أُرسلت لـ *{sent}* مستخدم\n💼 {job['title']}",
+                            parse_mode="Markdown"
+                        ))
+                    except: pass
+
+        except Exception as e:
+            logger.error(f"Channel poll error: {e}")
+
+        time.sleep(300)  # كل 5 دقائق
     time.sleep(90)
     while True:
         data = load_data()
@@ -2055,6 +2210,7 @@ def main():
     app.add_handler(MessageHandler(filters.ALL, channel_post_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
+    threading.Thread(target=channel_poll_loop,  args=(app,), daemon=True).start()
 
     port = int(os.environ.get("PORT", "8080"))
     start_webhook_server(app, load_data, save_data, update_user, port)
