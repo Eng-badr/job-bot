@@ -650,6 +650,38 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 # ══════════════════════════════════════════════════════
 #  BACKGROUND LOOPS
 # ══════════════════════════════════════════════════════
+def job_search_loop(app):
+    time.sleep(90)
+    while True:
+        data = load_data()
+        for cid, info in data.items():
+            if not isinstance(info, dict):
+                continue
+            if not info.get("profile", {}).get("specializations"):
+                continue
+            last = info.get("last_job_search", 0)
+            if time.time() - last >= JOB_SEARCH_INTERVAL:
+                logger.info(f"⏰ Auto search: {cid}")
+                try:
+                    import asyncio
+                    asyncio.run(app.bot.send_message(
+                        chat_id=int(cid),
+                        text="🔍 *جاري البحث عن وظائف جديدة...*\nسأرسل لك المناسب فور العثور عليه!",
+                        parse_mode="Markdown"
+                    ))
+                except: pass
+                found = run_job_search(cid, app)
+                try:
+                    import asyncio
+                    if found == 0:
+                        asyncio.run(app.bot.send_message(
+                            chat_id=int(cid),
+                            text="🔍 *انتهى البحث*\n\nلم أجد وظائف جديدة مناسبة هذه المرة.\n⏰ سأبحث مجدداً بعد 6 ساعات.",
+                            parse_mode="Markdown"
+                        ))
+                except: pass
+        time.sleep(1800)
+
 def channel_poll_loop(app):
     """يقرأ القناة كل 5 دقائق ويعالج الوظائف الجديدة."""
     import asyncio
