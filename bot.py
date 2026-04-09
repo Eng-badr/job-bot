@@ -439,7 +439,7 @@ def analyze_job(job: dict, profile: dict) -> dict | None:
 """, max_tokens=600)
     if result:
         logger.info(f"Job: match={result.get('match')} score={result.get('score')} - {job.get('title','')[:40]}")
-    if result and result.get("score", 0) >= 6:
+    if result and result.get("score", 0) >= 2:
         return result
     return None
 
@@ -632,25 +632,72 @@ def run_job_search(chat_id: str, app, manual: bool = False):
     })
 
     if manual and found == 0:
-        try:
-            import asyncio
-            asyncio.run(app.bot.send_message(
-                chat_id=int(chat_id),
-                text=(
-                    "🔍 *نتيجة البحث*\n\n"
-                    "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
-                    "⏰ سأبحث تلقائياً بعد 6 ساعات."
-                ),
-                parse_mode="Markdown"
-            ))
-        except:
-            pass
+        # لو عنده Gmail وباقة — جرب وظيفة تجريبية بإيميل لاختبار التقديم
+        if can_apply and gmail and app_pwd:
+            test_job = {
+                "title": "Data Analyst / AI Engineer",
+                "company": "Tech Company Saudi Arabia",
+                "location": "Riyadh, Saudi Arabia",
+                "desc": "Looking for a Data Analyst with AI experience",
+                "email_apply": "careers@techcompany.sa",
+                "link": "",
+                "source": "🧪 اختبار"
+            }
+            test_analysis = {
+                "match": True,
+                "score": 8,
+                "reason": "مناسب لتخصصك في الذكاء الاصطناعي وتحليل البيانات",
+                "job_title_clean": "Data Analyst / AI Engineer",
+                "company_summary": "شركة تقنية رائدة في المملكة",
+                "requirements": ["Python", "Machine Learning", "Data Analysis", "SQL"],
+                "work_type": "حضوري",
+                "salary": "غير محدد",
+                "deadline": "غير محدد",
+                "apply_email": "careers@techcompany.sa",
+                "apply_method": "email"
+            }
+            cover = generate_cover_letter(test_job, test_analysis, profile, user_name)
+            ok = send_application_email(
+                gmail, app_pwd, "careers@techcompany.sa",
+                "Data Analyst / AI Engineer", "Tech Company Saudi Arabia",
+                cover, cv_path if cv_path and os.path.exists(cv_path) else None,
+                user_name
+            )
+            status = "✅ تم إرسال إيميل تجريبي بنجاح!" if ok else "❌ فشل إرسال الإيميل التجريبي"
+            try:
+                import asyncio
+                asyncio.run(app.bot.send_message(
+                    chat_id=int(chat_id),
+                    text=(
+                        f"🔍 *نتيجة البحث*\n\n"
+                        f"لم أجد وظائف جديدة من JSearch الآن.\n\n"
+                        f"🧪 *اختبار التقديم التلقائي:*\n"
+                        f"{status}\n\n"
+                        f"📧 راجع صندوق المرسلات في Gmail للتحقق ✅"
+                    ),
+                    parse_mode="Markdown"
+                ))
+            except: pass
+        else:
+            try:
+                import asyncio
+                asyncio.run(app.bot.send_message(
+                    chat_id=int(chat_id),
+                    text=(
+                        "🔍 *نتيجة البحث*\n\n"
+                        "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
+                        "⏰ سأبحث تلقائياً بعد 6 ساعات."
+                    ),
+                    parse_mode="Markdown"
+                ))
+            except: pass
     return found
 
 # ══════════════════════════════════════════════════════
 #  BACKGROUND LOOPS
 # ══════════════════════════════════════════════════════
 def job_search_loop(app):
+    import asyncio
     time.sleep(90)
     while True:
         data = load_data()
@@ -663,7 +710,6 @@ def job_search_loop(app):
             if time.time() - last >= JOB_SEARCH_INTERVAL:
                 logger.info(f"⏰ Auto search: {cid}")
                 try:
-                    import asyncio
                     asyncio.run(app.bot.send_message(
                         chat_id=int(cid),
                         text="🔍 *جاري البحث عن وظائف جديدة...*\nسأرسل لك المناسب فور العثور عليه!",
@@ -672,7 +718,6 @@ def job_search_loop(app):
                 except: pass
                 found = run_job_search(cid, app)
                 try:
-                    import asyncio
                     if found == 0:
                         asyncio.run(app.bot.send_message(
                             chat_id=int(cid),
@@ -682,204 +727,6 @@ def job_search_loop(app):
                 except: pass
         time.sleep(1800)
 
-def channel_poll_loop(app):
-    """يقرأ القناة كل 5 دقائق ويعالج الوظائف الجديدة."""
-    import asyncio
-    time.sleep(60)
-    last_message_id = 0
-
-    while True:
-        try:
-            channel_id = os.environ.get("JOBS_CHANNEL_ID", "")
-            if not channel_id:
-                time.sleep(300)
-                continue
-
-            # نجيب آخر رسائل القناة
-            url = (
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-                f"/getUpdates?allowed_updates=[\"channel_post\"]&offset=-10&limit=10"
-            )
-            req  = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
-
-            if not data.get("ok"):
-                time.sleep(300)
-                continue
-
-            for update in data.get("result", []):
-                post = update.get("channel_post", {})
-                if not post:
-                    continue
-
-                msg_id   = post.get("message_id", 0)
-                chat     = post.get("chat", {})
-                chat_id  = chat.get("id", 0)
-                text     = post.get("text", "") or post.get("caption", "")
-
-                # تحقق من القناة الصحيحة
-                if str(chat_id) != str(channel_id):
-                    continue
-
-                # تجنب معالجة نفس الرسالة مرتين
-                if msg_id <= last_message_id:
-                    continue
-
-                last_message_id = msg_id
-
-                if not text or len(text) < 20:
-                    continue
-
-                logger.info(f"📢 New channel job detected: {text[:50]}")
-
-                # معالجة الوظيفة
-                analysis = ai_json(f"""
-حلّل هذا الإعلان الوظيفي:
-{text}
-
-أجب بـ JSON فقط:
-{{
-  "title": "المسمى الوظيفي",
-  "company": "اسم الشركة",
-  "location": "الموقع",
-  "desc": "وصف مختصر",
-  "apply_target": "الإيميل أو الرابط"
-}}
-""", max_tokens=300)
-
-                if not analysis:
-                    continue
-
-                job = {
-                    "title":       analysis.get("title", "وظيفة جديدة"),
-                    "company":     analysis.get("company", ""),
-                    "location":    analysis.get("location", "السعودية"),
-                    "desc":        analysis.get("desc", text[:300]),
-                    "link":        analysis.get("apply_target","") if "http" in analysis.get("apply_target","") else "",
-                    "email_apply": analysis.get("apply_target","") if "@" in analysis.get("apply_target","") else "",
-                    "source":      "📢 قناة فرصة",
-                }
-
-                users_data = load_data()
-                sent = 0
-
-                for uid, info in users_data.items():
-                    if not isinstance(info, dict):
-                        continue
-                    profile = info.get("profile", {})
-                    if not profile.get("specializations"):
-                        continue
-
-                    result = analyze_job(job, profile)
-                    if not result:
-                        continue
-
-                    stars  = "⭐" * min(int(result.get("score", 7)), 10)
-                    target = analysis.get("apply_target", "")
-                    apply_line = ""
-                    if "@" in target:
-                        apply_line = f"\n📧 *للتقديم:* `{target}`"
-                    elif "http" in target:
-                        apply_line = f"\n🔗 *للتقديم:* [اضغط هنا]({target})"
-
-                    msg = (
-                        f"📢 *وظيفة جديدة من قناة فرصة!*\n"
-                        f"{'━'*26}\n"
-                        f"💼 *{job['title']}*\n"
-                        f"🏢 {job['company']}  |  📍 {job['location']}\n"
-                        f"{'━'*26}\n"
-                        f"✨ {result.get('reason','مناسب لتخصصك')}\n"
-                        f"📊 {stars} ({result.get('score',7)}/10)"
-                        f"{apply_line}"
-                    )
-
-                    # تقديم تلقائي
-                    user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
-                    gmail     = info.get("gmail","")
-                    app_pwd   = info.get("app_password","")
-                    applied   = info.get("applied_count", 0)
-
-                    if (user_plan["auto_apply"] and gmail and app_pwd and
-                            "@" in target and applied < user_plan.get("max_jobs", 0)):
-                        cover = generate_cover_letter(job, result, profile, info.get("name","المتقدم"))
-                        ok = send_application_email(
-                            gmail, app_pwd, target,
-                            job["title"], job["company"], cover,
-                            info.get("cv_path"), info.get("name","المتقدم")
-                        )
-                        if ok:
-                            msg += f"\n\n🤖 *تم التقديم عنك تلقائياً!*"
-                            update_user(uid, {"applied_count": applied + 1})
-
-                    try:
-                        asyncio.run(app.bot.send_message(
-                            chat_id=int(uid), text=msg,
-                            parse_mode="Markdown", disable_web_page_preview=False
-                        ))
-                        sent += 1
-                    except Exception as e:
-                        logger.error(f"Channel send error {uid}: {e}")
-
-                logger.info(f"📢 Channel job sent to {sent} users: {job['title']}")
-
-                # إشعار الأدمن
-                admin_id = os.environ.get("ADMIN_CHAT_ID","")
-                if admin_id and sent > 0:
-                    try:
-                        asyncio.run(app.bot.send_message(
-                            chat_id=int(admin_id),
-                            text=f"📢 وظيفة من القناة أُرسلت لـ *{sent}* مستخدم\n💼 {job['title']}",
-                            parse_mode="Markdown"
-                        ))
-                    except: pass
-
-        except Exception as e:
-            logger.error(f"Channel poll error: {e}")
-
-        time.sleep(300)  # كل 5 دقائق
-    time.sleep(90)
-    while True:
-        data = load_data()
-        for cid, info in data.items():
-            if not isinstance(info, dict):
-                continue
-            if not info.get("profile", {}).get("specializations"):
-                continue
-            last = info.get("last_job_search", 0)
-            if time.time() - last >= JOB_SEARCH_INTERVAL:
-                logger.info(f"⏰ Auto search: {cid}")
-                # أرسل تنبيه قبل البحث
-                try:
-                    import asyncio
-                    asyncio.run(app.bot.send_message(
-                        chat_id=int(cid),
-                        text=(
-                            "🔍 *جاري البحث عن وظائف جديدة...*\n\n"
-                            "⏳ أبحث لك الآن في المصادر المتاحة\n"
-                            "سأرسل لك الوظائف المناسبة فور العثور عليها!"
-                        ),
-                        parse_mode="Markdown"
-                    ))
-                except:
-                    pass
-                found = run_job_search(cid, app)
-                # أرسل ملخص نتيجة البحث
-                try:
-                    import asyncio
-                    if found == 0:
-                        asyncio.run(app.bot.send_message(
-                            chat_id=int(cid),
-                            text=(
-                                "🔍 *انتهى البحث*\n\n"
-                                "لم أجد وظائف جديدة مناسبة هذه المرة.\n"
-                                "⏰ سأبحث مجدداً بعد 6 ساعات."
-                            ),
-                            parse_mode="Markdown"
-                        ))
-                except:
-                    pass
-        time.sleep(1800)
 
 def email_monitor_loop(app):
     while True:
@@ -2239,16 +2086,14 @@ def main():
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    app.add_handler(MessageHandler(filters.ALL, channel_post_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
-    threading.Thread(target=channel_poll_loop,  args=(app,), daemon=True).start()
 
     port = int(os.environ.get("PORT", "8080"))
     start_webhook_server(app, load_data, save_data, update_user, port)
 
     logger.info("🤖 بوت الوظائف الذكي v3.0 — يعمل!")
-    app.run_polling(allowed_updates=["message", "callback_query", "channel_post", "edited_channel_post"])
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
