@@ -1708,6 +1708,8 @@ async def process_channel_job_text(text: str, ctx):
             )
         except:
             pass
+
+async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Handle CV start from button."""
     q       = update.callback_query
     await q.answer()
