@@ -1428,21 +1428,30 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def channel_post_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """استقبال رسائل القناة مباشرة."""
-    if not update.channel_post:
+    """استقبال رسائل القناة."""
+    # نتحقق من channel_post أو message من قناة
+    post = update.channel_post or update.edited_channel_post
+    if not post:
+        # لو مو channel post نتجاهل
+        if update.effective_chat and update.effective_chat.type not in ["channel"]:
+            return
         return
-    channel_id   = update.channel_post.chat.id
-    channel_name = update.channel_post.chat.title or ""
-    text         = update.channel_post.text or update.channel_post.caption or ""
 
-    logger.info(f"📢 Channel post from: {channel_name} ID={channel_id}")
+    channel_id   = post.chat.id
+    channel_name = post.chat.title or ""
+    text         = post.text or post.caption or ""
+
+    logger.info(f"📢 Channel post received: {channel_name} ID={channel_id} text={text[:30]}")
 
     jobs_channel = os.environ.get("JOBS_CHANNEL_ID", "")
-    if not jobs_channel or str(channel_id) != str(jobs_channel):
-        logger.info(f"📢 Ignored — not jobs channel (expected {jobs_channel})")
+    if not jobs_channel:
+        logger.warning("📢 JOBS_CHANNEL_ID not set!")
         return
-
+    if str(channel_id) != str(jobs_channel):
+        logger.info(f"📢 Ignored — expected {jobs_channel} got {channel_id}")
+        return
     if not text or len(text) < 20:
+        logger.info("📢 Text too short, ignored")
         return
 
     await process_channel_job_text(text, ctx)
@@ -2043,17 +2052,15 @@ def main():
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    # ── استقبال رسائل القناة ──
-    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, channel_post_handler))
+    app.add_handler(MessageHandler(filters.ALL, channel_post_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
 
-    # Start Salla Webhook Server
     port = int(os.environ.get("PORT", "8080"))
     start_webhook_server(app, load_data, save_data, update_user, port)
 
     logger.info("🤖 بوت الوظائف الذكي v3.0 — يعمل!")
-    app.run_polling(allowed_updates=["message", "callback_query", "channel_post"])
+    app.run_polling(allowed_updates=["message", "callback_query", "channel_post", "edited_channel_post"])
 
 if __name__ == "__main__":
     main()
