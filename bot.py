@@ -1172,9 +1172,27 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
 async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # ── تجاهل رسائل القنوات والمجموعات غير المعروفة ──
+    if not update.message:
+        return
+    if update.effective_chat and update.effective_chat.type in ["channel", "supergroup", "group"]:
+        channel_id = update.effective_chat.id
+        channel_name = update.effective_chat.title or ""
+        logger.info(f"📢 Channel message from: {channel_name} ID={channel_id}")
+        # لو كانت القناة هي قناة الوظائف — نعالج الرسالة
+        jobs_channel = os.environ.get("JOBS_CHANNEL_ID", "")
+        if jobs_channel and str(channel_id) == str(jobs_channel):
+            await process_channel_job(update, ctx)
+        return
+
     chat_id = str(update.effective_chat.id)
-    step    = ctx.user_data.get("step", "")
-    text    = update.message.text or ""
+
+    # ── تجاهل لو ctx.user_data غير متاح ──
+    if ctx.user_data is None:
+        return
+
+    step = ctx.user_data.get("step", "")
+    text = update.message.text or ""
 
     # CV building takes priority
     if step == "cv_building":
@@ -1409,7 +1427,120 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def process_channel_job(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """معالجة وظيفة واردة من قناة Fursa Jobs Feed."""
+    text = update.message.text or update.message.caption or ""
+    if not text or len(text) < 20:
+        return
+
+    logger.info(f"📢 معالجة وظيفة من القناة: {text[:50]}")
+
+    # تحليل الوظيفة بالـ AI
+    analysis = ai_json(f"""
+حلّل هذا الإعلان الوظيفي واستخرج معلوماته:
+
+{text}
+
+أجب بـ JSON فقط:
+{{
+  "title": "المسمى الوظيفي",
+  "company": "اسم الشركة",
+  "location": "الموقع",
+  "desc": "وصف مختصر",
+  "apply_method": "email/website/whatsapp",
+  "apply_target": "الإيميل أو الرابط أو رقم الواتساب",
+  "specializations": ["تخصص1", "تخصص2"]
+}}
+""", max_tokens=400)
+
+    if not analysis:
+        return
+
+    job = {
+        "title":       analysis.get("title", "وظيفة جديدة"),
+        "company":     analysis.get("company", ""),
+        "location":    analysis.get("location", "السعودية"),
+        "desc":        analysis.get("desc", text[:300]),
+        "link":        analysis.get("apply_target", "") if "http" in analysis.get("apply_target","") else "",
+        "email_apply": analysis.get("apply_target","") if "@" in analysis.get("apply_target","") else "",
+        "source":      "📢 قناة فرصة",
+    }
+
+    # إرسال لكل المستخدمين المناسبين
+    data = load_data()
+    sent = 0
+    for uid, info in data.items():
+        if not isinstance(info, dict):
+            continue
+        profile = info.get("profile", {})
+        if not profile.get("specializations"):
+            continue
+
+        result = analyze_job(job, profile)
+        if not result:
+            continue
+
+        stars = "⭐" * min(int(result.get("score", 7)), 10)
+        apply_line = ""
+        target = analysis.get("apply_target", "")
+        if "@" in target:
+            apply_line = f"📧 *للتقديم:* `{target}`"
+        elif "http" in target:
+            apply_line = f"🔗 *للتقديم:* [اضغط هنا]({target})"
+        elif target:
+            apply_line = f"📱 *للتواصل:* {target}"
+
+        msg = (
+            f"📢 *وظيفة جديدة من قناة فرصة!*\n"
+            f"{'━'*26}\n"
+            f"💼 *{job['title']}*\n"
+            f"🏢 {job['company']}  |  📍 {job['location']}\n"
+            f"{'━'*26}\n"
+            f"✨ *السبب:* {result.get('reason','مناسب لتخصصك')}\n"
+            f"📊 *الملاءمة:* {stars} ({result.get('score',7)}/10)\n\n"
+            f"{apply_line}"
+        )
+
+        # تقديم تلقائي لو الوظيفة بإيميل
+        user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
+        gmail   = info.get("gmail","")
+        app_pwd = info.get("app_password","")
+        applied = info.get("applied_count", 0)
+
+        if (user_plan["auto_apply"] and gmail and app_pwd and
+                "@" in target and applied < user_plan.get("max_jobs",0)):
+            cover = generate_cover_letter(job, result, profile, info.get("name","المتقدم"))
+            ok = send_application_email(
+                gmail, app_pwd, target,
+                job["title"], job["company"], cover,
+                info.get("cv_path"), info.get("name","المتقدم")
+            )
+            if ok:
+                msg += f"\n\n🤖 *تم التقديم عنك تلقائياً!*"
+                update_user(uid, {"applied_count": applied + 1})
+
+        try:
+            await ctx.bot.send_message(
+                chat_id=int(uid), text=msg,
+                parse_mode="Markdown", disable_web_page_preview=False
+            )
+            sent += 1
+        except Exception as e:
+            logger.error(f"Channel job send error {uid}: {e}")
+
+    logger.info(f"📢 Channel job sent to {sent} users: {job['title']}")
+
+    # إشعار الأدمن
+    admin_id = os.environ.get("ADMIN_CHAT_ID","")
+    if admin_id:
+        try:
+            await ctx.bot.send_message(
+                chat_id=int(admin_id),
+                text=f"📢 *وظيفة من القناة أُرسلت لـ {sent} مستخدم*\n💼 {job['title']} — {job['company']}",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
     """Handle CV start from button."""
     q       = update.callback_query
     await q.answer()
