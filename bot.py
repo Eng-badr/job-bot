@@ -1404,12 +1404,14 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     skipped   = 0
 
     for uid, info in data.items():
-        if uid == admin_id:
+        if not isinstance(info, dict):
             continue
         profile = info.get("profile", {})
+        if not profile.get("specializations"):
+            continue
         user_specs = profile.get("specializations", [])
 
-        # Check if any specialization matches
+        # Check if any specialization matches (or send to all if no target specs)
         match = any(s in target_specs for s in user_specs) if target_specs else True
 
         if not match:
@@ -1417,10 +1419,10 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             continue
 
         # Analyze match for this user
-        result = match_job(job, profile) if profile else {"match": True, "score": 7, "reason": "إعلان مباشر من المشرف"}
+        result = analyze_job(job, profile) if profile else {"match": True, "score": 7, "reason": "إعلان مباشر من المشرف"}
         if not result:
-            skipped += 1
-            continue
+            # لو ما حلل — أرسل بدون تحليل
+            result = {"match": True, "score": 7, "reason": "إعلان مناسب لتخصصك"}
 
         stars = "⭐" * min(int(result.get("score", 7)), 10)
         reqs  = "\n".join(f"   • {r}" for r in analysis.get("requirements", [])[:4])
