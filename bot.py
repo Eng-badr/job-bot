@@ -1402,14 +1402,17 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data      = load_data()
     sent      = 0
     skipped   = 0
+    logger.info(f"📢 /add broadcast: {len(data)} total records, target_specs={target_specs}")
 
     for uid, info in data.items():
         if not isinstance(info, dict):
             continue
         profile = info.get("profile", {})
         if not profile.get("specializations"):
+            logger.info(f"📢 skip {uid} — no profile")
             continue
         user_specs = profile.get("specializations", [])
+        logger.info(f"📢 checking {uid} specs={user_specs[:2]}")
 
         # Check if any specialization matches - more flexible
         if target_specs:
