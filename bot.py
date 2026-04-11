@@ -508,8 +508,9 @@ def send_application_email(
             part.add_header("Content-Disposition", f'attachment; filename="CV_{applicant_name}.pdf"')
             msg.attach(part)
 
-        # Send
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        # Send via port 587 (TLS) - more compatible with cloud hosting
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
         server.login(from_gmail, app_password)
         server.sendmail(from_gmail, to_email, msg.as_string())
         server.quit()
