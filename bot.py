@@ -430,7 +430,7 @@ JSON فقط:
 """, max_tokens=300)
     if result:
         logger.info(f"Job: match={result.get('match')} score={result.get('score')} - {job.get('title','')[:40]}")
-    if result and result.get("score", 0) >= 2:
+    if result and result.get("score", 0) >= 3:
         return result
     return None
 
@@ -2120,7 +2120,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
-    threading.Thread(target=email_monitor_loop, args=(app,), daemon=True).start()
+    # email_monitor_loop disabled - not needed
 
     port = int(os.environ.get("PORT", "8080"))
     start_webhook_server(app, load_data, save_data, update_user, port)
