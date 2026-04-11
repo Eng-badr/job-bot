@@ -303,10 +303,10 @@ def update_user(chat_id: str, fields: dict):
 # ══════════════════════════════════════════════════════
 ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-def ai_call(prompt: str, max_tokens: int = 500) -> str:
+def ai_call(prompt: str, max_tokens: int = 400) -> str:
     try:
         r = ai.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5-20251001",
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -407,36 +407,27 @@ def analyze_job(job: dict, profile: dict) -> dict | None:
     specs  = ", ".join(profile.get("specializations", []))
     cities = ", ".join(profile.get("cities", []))
     result = ai_json(f"""
-أنت خبير توظيف. حلّل هذه الوظيفة بدقة.
+أنت خبير توظيف. حلّل هذه الوظيفة.
 
-ملف المتقدم:
-- التخصصات: {specs}
-- المؤهل: {profile.get('education','')}
-- الخبرة: {profile.get('experience','')}
-- المدن المفضلة: {cities}
+المتقدم: {specs} | {profile.get('education','')} | {profile.get('experience','')}
+الوظيفة: {job.get('title','')} - {job.get('company','')} - {job.get('location','')}
+الوصف: {job.get('desc','')[:200]}
 
-بيانات الوظيفة:
-- المسمى: {job.get('title','')}
-- الشركة: {job.get('company','')}
-- الموقع: {job.get('location', job.get('source',''))}
-- الوصف: {job.get('desc','لا يوجد')}
-- الرابط: {job.get('link','')}
-
-المطلوب - أجب بـ JSON فقط:
+JSON فقط:
 {{
   "match": true/false,
   "score": 1-10,
-  "reason": "جملة واحدة لماذا مناسبة",
-  "job_title_clean": "المسمى الوظيفي المنظّف",
-  "company_summary": "نبذة قصيرة عن الشركة أو مجالها",
-  "requirements": ["متطلب 1", "متطلب 2", "متطلب 3"],
-  "work_type": "حضوري/عن بعد/هجين/غير محدد",
-  "salary": "الراتب إن وُجد أو غير محدد",
-  "apply_method": "email/website/form",
-  "apply_email": "الإيميل إن وُجد في الوصف أو فارغ",
-  "deadline": "آخر موعد إن وُجد أو غير محدد"
+  "reason": "جملة واحدة",
+  "job_title_clean": "المسمى",
+  "company_summary": "نبذة قصيرة",
+  "requirements": ["متطلب1", "متطلب2"],
+  "work_type": "حضوري/عن بعد/هجين",
+  "salary": "الراتب أو غير محدد",
+  "apply_method": "email/website",
+  "apply_email": "الإيميل أو فارغ",
+  "deadline": "غير محدد"
 }}
-""", max_tokens=600)
+""", max_tokens=300)
     if result:
         logger.info(f"Job: match={result.get('match')} score={result.get('score')} - {job.get('title','')[:40]}")
     if result and result.get("score", 0) >= 2:
@@ -465,8 +456,8 @@ def generate_cover_letter(job: dict, analysis: dict, profile: dict, user_name: s
 - يبرز مهارات المتقدم المناسبة
 - يُعبّر عن الاهتمام والحماس
 - ينتهي بشكر وترقب الرد
-- لا يزيد عن 200 كلمة
-""", max_tokens=600)
+- لا يزيد عن 150 كلمة
+""", max_tokens=350)
 
 def classify_apply_method(job: dict, analysis: dict) -> tuple[str, str]:
     """Returns (method, target) where method is 'email' or 'website'."""
