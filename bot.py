@@ -1411,8 +1411,21 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             continue
         user_specs = profile.get("specializations", [])
 
-        # Check if any specialization matches (or send to all if no target specs)
-        match = any(s in target_specs for s in user_specs) if target_specs else True
+        # Check if any specialization matches - more flexible
+        if target_specs:
+            # مطابقة مرنة — كلمات مشتركة
+            user_specs_str = " ".join(user_specs).lower()
+            target_str = " ".join(target_specs).lower()
+            keywords = ["ذكاء", "بيانات", "برمجة", "حاسب", "تقني", "ai", "data", "engineer", 
+                       "developer", "analyst", "software", "information", "computer", "مهندس",
+                       "محلل", "تطوير", "أمن", "شبكات", "cloud", "سحابة"]
+            match = (
+                any(s in target_specs for s in user_specs) or
+                any(k in user_specs_str and k in target_str for k in keywords) or
+                len(target_specs) == 0
+            )
+        else:
+            match = True
 
         if not match:
             skipped += 1
