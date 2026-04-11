@@ -470,12 +470,23 @@ def generate_cover_letter(job: dict, analysis: dict, profile: dict, user_name: s
 
 def classify_apply_method(job: dict, analysis: dict) -> tuple[str, str]:
     """Returns (method, target) where method is 'email' or 'website'."""
+    # أولاً: إيميل صريح في التحليل أو الوظيفة
     apply_email = analysis.get("apply_email", "") or job.get("email_apply", "")
-    method      = analysis.get("apply_method", "website")
-    if apply_email and "@" in apply_email:
+    if apply_email and "@" in apply_email and "noreply" not in apply_email.lower():
         return "email", apply_email
+
+    # ثانياً: لو الـ AI قال email ابحث في النص
+    method = analysis.get("apply_method", "website")
     if method == "email":
-        return "website", job.get("link", "")
+        # ابحث عن إيميل في الوصف
+        import re
+        desc = job.get("desc", "") + " " + str(analysis)
+        emails = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', desc)
+        valid = [e for e in emails if "noreply" not in e.lower() and "linkedin" not in e.lower()]
+        if valid:
+            return "email", valid[0]
+
+    # ثالثاً: موقع
     return "website", job.get("link", "")
 
 # ══════════════════════════════════════════════════════
@@ -1450,6 +1461,35 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", disable_web_page_preview=False
             ))
             sent += 1
+
+            # ── تقديم تلقائي لو الوظيفة بإيميل ──────
+            email_target = analysis.get("apply_target","")
+            if "@" in email_target:
+                user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
+                u_gmail   = info.get("gmail","")
+                u_pwd     = info.get("app_password","")
+                u_applied = info.get("applied_count", 0)
+                u_cvpath  = info.get("cv_path","")
+                u_name    = info.get("name","المتقدم")
+
+                if (user_plan["auto_apply"] and u_gmail and u_pwd and
+                        u_applied < user_plan.get("max_jobs", 0)):
+                    cover = generate_cover_letter(job, result, profile, u_name)
+                    ok = send_application_email(
+                        u_gmail, u_pwd, email_target,
+                        job["title"], job["company"], cover,
+                        u_cvpath if u_cvpath and os.path.exists(u_cvpath) else None,
+                        u_name
+                    )
+                    if ok:
+                        update_user(uid, {"applied_count": u_applied + 1})
+                        asyncio.run(ctx.bot.send_message(
+                            chat_id=int(uid),
+                            text=f"🤖 *تم التقديم عنك تلقائياً!*\n📧 إلى: `{email_target}`",
+                            parse_mode="Markdown"
+                        ))
+                        logger.info(f"✅ Auto-applied for {uid} to {email_target}")
+
         except Exception as e:
             logger.error(f"Broadcast error {uid}: {e}")
 
