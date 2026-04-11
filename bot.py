@@ -1464,16 +1464,15 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            import asyncio
-            asyncio.run(ctx.bot.send_message(
+            await ctx.bot.send_message(
                 chat_id=int(uid), text=msg,
                 parse_mode="Markdown", disable_web_page_preview=False
-            ))
+            )
             sent += 1
 
             # ── تقديم تلقائي لو الوظيفة بإيميل ──────
             email_target = analysis.get("apply_target","")
-            if "@" in email_target:
+            if "@" in email_target and "noreply" not in email_target.lower():
                 user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
                 u_gmail   = info.get("gmail","")
                 u_pwd     = info.get("app_password","")
@@ -1492,11 +1491,11 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     )
                     if ok:
                         update_user(uid, {"applied_count": u_applied + 1})
-                        asyncio.run(ctx.bot.send_message(
+                        await ctx.bot.send_message(
                             chat_id=int(uid),
                             text=f"🤖 *تم التقديم عنك تلقائياً!*\n📧 إلى: `{email_target}`",
                             parse_mode="Markdown"
-                        ))
+                        )
                         logger.info(f"✅ Auto-applied for {uid} to {email_target}")
 
         except Exception as e:
