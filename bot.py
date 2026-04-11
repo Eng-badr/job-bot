@@ -1385,16 +1385,33 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ تعذّر تحليل الإعلان. تأكد من وضوح المعلومات.")
         return
 
+    # استخراج الإيميل مباشرة من النص بـ regex
+    import re
+    emails_found = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', job_text)
+    direct_email = next((e for e in emails_found if "noreply" not in e.lower()), "")
+
+    apply_target = analysis.get("apply_target", "")
+    # لو الـ AI ما استخرج الإيميل صح، استخدم الـ regex
+    if direct_email and "@" not in apply_target:
+        apply_target = direct_email
+    elif direct_email and "@" in apply_target and apply_target != direct_email:
+        apply_target = direct_email  # الـ regex أدق
+
+    logger.info(f"📢 apply_target={apply_target} direct_email={direct_email}")
+
     # Build job object
     job = {
-        "title":   analysis.get("title", "وظيفة جديدة"),
-        "company": analysis.get("company", ""),
-        "location": analysis.get("location", "السعودية"),
-        "desc":    analysis.get("desc", job_text[:300]),
-        "link":    analysis.get("apply_target", "") if "http" in analysis.get("apply_target","") else "",
-        "email_apply": analysis.get("apply_target","") if "@" in analysis.get("apply_target","") else "",
-        "source":  "📢 إعلان مباشر",
+        "title":      analysis.get("title", "وظيفة جديدة"),
+        "company":    analysis.get("company", ""),
+        "location":   analysis.get("location", "السعودية"),
+        "desc":       analysis.get("desc", job_text[:300]),
+        "link":       apply_target if "http" in apply_target else "",
+        "email_apply": apply_target if "@" in apply_target else "",
+        "source":     "📢 إعلان مباشر",
     }
+
+    # تحديث apply_target في analysis
+    analysis["apply_target"] = apply_target
 
     target_specs = analysis.get("specializations", [])
 
