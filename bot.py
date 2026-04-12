@@ -1392,8 +1392,22 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 """, max_tokens=400)
 
     if not analysis:
-        await update.message.reply_text("❌ تعذّر تحليل الإعلان. تأكد من وضوح المعلومات.")
-        return
+        # Fallback — نحلل يدوياً بدون AI
+        import re
+        emails_found = re.findall(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', job_text)
+        direct_email = next((e for e in emails_found if "noreply" not in e.lower()), "")
+        lines = [l.strip() for l in job_text.strip().split('\n') if l.strip()]
+        analysis = {
+            "title":          lines[0] if lines else "وظيفة جديدة",
+            "company":        "غير محدد",
+            "location":       "السعودية",
+            "desc":           job_text[:200],
+            "requirements":   [],
+            "apply_method":   "email" if direct_email else "other",
+            "apply_target":   direct_email,
+            "specializations": []
+        }
+        logger.info(f"📢 Using fallback analysis, email={direct_email}")
 
     # استخراج الإيميل مباشرة من النص بـ regex
     import re
