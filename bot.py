@@ -484,44 +484,76 @@ def classify_apply_method(job: dict, analysis: dict) -> tuple[str, str]:
 #  AUTO EMAIL APPLY
 # ══════════════════════════════════════════════════════
 def send_application_email(
-    from_gmail: str, app_password: str,
+    user_email: str, app_password: str,
     to_email: str, job_title: str, company: str,
     cover_letter: str, cv_path: str | None, applicant_name: str
 ) -> bool:
-    """Send application email via Gmail SMTP."""
+    """Send application email via SendGrid with CC to user and Reply-To."""
+    import urllib.request
+    import base64
+
+    sendgrid_key = os.environ.get("SENDGRID_API_KEY", "")
+    fursa_email  = os.environ.get("FURSA_EMAIL", "fursa.ai.job@gmail.com")
+
+    if not sendgrid_key:
+        logger.error("SENDGRID_API_KEY not set")
+        return False
+
     try:
-        msg = MIMEMultipart()
-        msg["From"]    = f"{applicant_name} <{from_gmail}>"
-        msg["To"]      = to_email
-        msg["Subject"] = f"طلب توظيف — {job_title} | {company}"
+        body_text = (
+            f"{cover_letter}\n\n"
+            f"{'─'*40}\n"
+            f"📌 هذا الطلب مُقدَّم نيابةً عن: {applicant_name}\n"
+            f"📧 للتواصل المباشر: {user_email}\n"
+            f"🤖 تم الإرسال عبر منصة فرصة | Fursa AI"
+        )
 
-        body = f"{cover_letter}\n\n---\n{applicant_name}\n{from_gmail}"
-        msg.attach(MIMEText(body, "plain", "utf-8"))
+        payload = {
+            "personalizations": [{
+                "to": [{"email": to_email}],
+                "cc": [{"email": user_email, "name": applicant_name}]
+            }],
+            "from": {
+                "email": fursa_email,
+                "name": f"{applicant_name} | فرصة AI"
+            },
+            "reply_to": {
+                "email": user_email,
+                "name": applicant_name
+            },
+            "subject": f"طلب توظيف — {job_title} | {company}",
+            "content": [{"type": "text/plain", "value": body_text}],
+        }
 
+        # إرفاق CV
         if cv_path and os.path.exists(cv_path):
             with open(cv_path, "rb") as f:
-                part = MIMEBase("application", "octet-stream")
-                part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="CV_{applicant_name}.pdf"')
-            msg.attach(part)
+                cv_data = base64.b64encode(f.read()).decode()
+            payload["attachments"] = [{
+                "content":     cv_data,
+                "filename":    f"CV_{applicant_name}.pdf",
+                "type":        "application/pdf",
+                "disposition": "attachment"
+            }]
 
-        # Try 465 first, fallback to 587
-        try:
-            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30)
-            server.login(from_gmail, app_password)
-            server.sendmail(from_gmail, to_email, msg.as_string())
-            server.quit()
-            logger.info(f"✅ Email sent via port 465 to {to_email}")
-            return True
-        except Exception:
-            server = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
-            server.starttls()
-            server.login(from_gmail, app_password)
-            server.sendmail(from_gmail, to_email, msg.as_string())
-            server.quit()
-            logger.info(f"✅ Email sent via port 587 to {to_email}")
-            return True
+        data = json.dumps(payload).encode("utf-8")
+        req  = urllib.request.Request(
+            "https://api.sendgrid.com/v3/mail/send",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {sendgrid_key}",
+                "Content-Type":  "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status in (200, 202):
+                logger.info(f"✅ SendGrid sent to {to_email} CC {user_email}")
+                return True
+            else:
+                body = resp.read().decode()
+                logger.error(f"SendGrid error {resp.status}: {body}")
+                return False
 
     except Exception as e:
         logger.error(f"Email send error: {e}")
@@ -1198,14 +1230,14 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "setup_email":
         ctx.user_data["step"] = "waiting_gmail"
         await q.message.reply_text(
-            "📧 *ربط Gmail وإرسال CV*\n\n"
-            "هذا يتيح للبوت التقديم عنك تلقائياً على وظائف الإيميل.\n\n"
-            "📹 *شاهد شرح خطوات الربط:*\n"
-            "👉 https://youtube.com/shorts/WDfvVRVV8Js\n\n"
+            "📧 *ربط إيميلك للتقديم التلقائي*\n\n"
+            "البوت سيقدم عنك تلقائياً على الوظائف المناسبة!\n\n"
+            "✅ ستصلك نسخة من كل تقديم على إيميلك\n"
+            "✅ ردود الشركات ترد مباشرة عليك\n"
+            "✅ إشعار فوري في البوت بكل تقديم\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "أرسل عنوان Gmail الخاص بك:",
-            parse_mode="Markdown",
-            disable_web_page_preview=False
+            "أرسل عنوان إيميلك:",
+            parse_mode="Markdown"
         )
 
     elif data == "main_menu":
@@ -1245,50 +1277,19 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if step == "waiting_gmail":
-        if "@gmail.com" not in text:
-            await update.message.reply_text("⚠️ عنوان Gmail غير صحيح.")
+        if "@" not in text or "." not in text:
+            await update.message.reply_text("⚠️ عنوان إيميل غير صحيح. أرسل إيميلك الصحيح:")
             return
-        update_user(chat_id, {"gmail": text.strip()})
-        ctx.user_data["step"] = "waiting_app_password"
+        update_user(chat_id, {"gmail": text.strip(), "app_password": "sendgrid"})
+        ctx.user_data["step"] = ""
         await update.message.reply_text(
-            "✅ تم حفظ الإيميل!\n\n"
-            "*الآن أحتاج App Password (16 حرف):*\n\n"
-            "📹 شاهد الشرح المرئي:\n"
-            "👉 https://youtube.com/shorts/WDfvVRVV8Js\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "*أو اتبع الخطوات:*\n"
-            "1. myaccount.google.com\n"
-            "2. الأمان ← التحقق بخطوتين\n"
-            "3. App Passwords ← Mail ← Other ← 'Job Bot'\n"
-            "4. انسخ الرمز وأرسله هنا\n\n"
-            "🔗 https://myaccount.google.com/apppasswords",
+            "✅ *تم ربط إيميلك بنجاح!*\n\n"
+            "📧 سيتلقى إيميلك نسخة من كل تقديم\n"
+            "💬 ردود الشركات ترد عليك مباشرة\n\n"
+            "📎 *الخطوة التالية:* ارفع CV بصيغة PDF لتفعيل التقديم التلقائي:",
             parse_mode="Markdown"
         )
-
-    elif step == "waiting_app_password":
-        pwd = text.replace(" ", "").strip()
-        if len(pwd) != 16:
-            await update.message.reply_text("⚠️ الرمز يجب أن يكون 16 حرفاً.")
-            return
-        await update.message.reply_text("⏳ جاري التحقق من Gmail...")
-        try:
-            m = imaplib.IMAP4_SSL("imap.gmail.com")
-            m.login(get_user(chat_id).get("gmail", ""), pwd)
-            m.logout()
-            update_user(chat_id, {"app_password": pwd, "last_uid": None})
-            ctx.user_data["step"] = "waiting_cv"
-            await update.message.reply_text(
-                "✅ *تم ربط Gmail بنجاح!*\n\n"
-                "📎 الآن أرسل ملف CV بصيغة *PDF* لتفعيل التقديم التلقائي:",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            await update.message.reply_text(
-                f"❌ فشل الاتصال.\n\nتأكد من:\n"
-                f"• تفعيل التحقق بخطوتين\n• تفعيل IMAP في Gmail\n"
-                f"• صحة الرمز (16 حرف)\n\nالخطأ: `{str(e)[:100]}`",
-                parse_mode="Markdown"
-            )
+        ctx.user_data["step"] = "waiting_cv"
 
 async def doc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = str(update.effective_chat.id)
