@@ -488,18 +488,16 @@ def send_application_email(
     to_email: str, job_title: str, company: str,
     cover_letter: str, cv_path: str | None, applicant_name: str
 ) -> bool:
-    """Send application email with cover letter and CV attachment."""
+    """Send application email via Gmail SMTP."""
     try:
         msg = MIMEMultipart()
         msg["From"]    = f"{applicant_name} <{from_gmail}>"
         msg["To"]      = to_email
         msg["Subject"] = f"طلب توظيف — {job_title} | {company}"
 
-        # Body
         body = f"{cover_letter}\n\n---\n{applicant_name}\n{from_gmail}"
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
-        # Attach CV if exists
         if cv_path and os.path.exists(cv_path):
             with open(cv_path, "rb") as f:
                 part = MIMEBase("application", "octet-stream")
@@ -508,13 +506,23 @@ def send_application_email(
             part.add_header("Content-Disposition", f'attachment; filename="CV_{applicant_name}.pdf"')
             msg.attach(part)
 
-        # Send via port 587 (TLS) - more compatible with cloud hosting
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(from_gmail, app_password)
-        server.sendmail(from_gmail, to_email, msg.as_string())
-        server.quit()
-        return True
+        # Try 465 first, fallback to 587
+        try:
+            server = smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30)
+            server.login(from_gmail, app_password)
+            server.sendmail(from_gmail, to_email, msg.as_string())
+            server.quit()
+            logger.info(f"✅ Email sent via port 465 to {to_email}")
+            return True
+        except Exception:
+            server = smtplib.SMTP("smtp.gmail.com", 587, timeout=30)
+            server.starttls()
+            server.login(from_gmail, app_password)
+            server.sendmail(from_gmail, to_email, msg.as_string())
+            server.quit()
+            logger.info(f"✅ Email sent via port 587 to {to_email}")
+            return True
+
     except Exception as e:
         logger.error(f"Email send error: {e}")
         return False
