@@ -437,7 +437,7 @@ JSON فقط:
 def generate_cover_letter(job: dict, analysis: dict, profile: dict, user_name: str) -> str:
     """Generate a professional Arabic cover letter."""
     specs = ", ".join(profile.get("specializations", []))
-    return ai_call(f"""
+    result = ai_call(f"""
 اكتب خطاب تقديم وظيفي احترافي باللغة العربية للمعلومات التالية:
 
 المتقدم: {user_name}
@@ -458,6 +458,25 @@ def generate_cover_letter(job: dict, analysis: dict, profile: dict, user_name: s
 - ينتهي بشكر وترقب الرد
 - لا يزيد عن 150 كلمة
 """, max_tokens=350)
+
+    if result:
+        return result
+
+    # خطاب افتراضي لو فشل الـ AI
+    job_title = analysis.get('job_title_clean', job.get('title', 'الوظيفة'))
+    company   = job.get('company', 'الشركة')
+    return (
+        f"السادة المحترمين في {company}،\n\n"
+        f"تحية طيبة وبعد،\n\n"
+        f"يسعدني تقديم طلبي للانضمام إلى فريقكم في وظيفة {job_title}، "
+        f"إذ أرى أن مؤهلاتي وخبرتي في مجال {specs} تتوافق مع متطلبات هذه الوظيفة.\n\n"
+        f"أحمل {profile.get('education', 'مؤهلاً علمياً')} وخبرة {profile.get('experience', 'مهنية')} "
+        f"مكّنتني من اكتساب مهارات تقنية وتحليلية متقدمة.\n\n"
+        f"أتطلع للانضمام إلى مؤسستكم المرموقة والمساهمة في تحقيق أهدافها، "
+        f"وأنا رهن الإشارة لأي استفسار أو مقابلة في الوقت المناسب لكم.\n\n"
+        f"مع خالص الاحترام والتقدير،\n"
+        f"{user_name}"
+    )
 
 def classify_apply_method(job: dict, analysis: dict) -> tuple[str, str]:
     """Returns (method, target) where method is 'email' or 'website'."""
