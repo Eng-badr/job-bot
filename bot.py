@@ -368,13 +368,24 @@ def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
             logger.warning("JSearch: No API key found")
             return []
         q   = urllib.parse.quote(f"{keywords} in {location}")
-        url = f"https://jsearch.p.rapidapi.com/search?query={q}&page=1&num_pages=3&date_posted=month"
+        url = f"https://jsearch.p.rapidapi.com/search?query={q}&page=1&num_pages=2&date_posted=month"
         req = urllib.request.Request(url, headers={
             "X-RapidAPI-Key":  api_key,
             "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
         })
-        with urllib.request.urlopen(req, timeout=25) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        # Retry up to 3 times
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=25) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < 2:
+                    logger.warning(f"JSearch 429 — waiting 10s before retry {attempt+1}")
+                    time.sleep(10)
+                else:
+                    raise e
+
         for item in data.get("data", [])[:20]:
             title = item.get("job_title", "")
             if title:
@@ -393,11 +404,63 @@ def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
         logger.warning(f"JSearch error: {e}")
     return jobs
 
-def fetch_all(keywords: str) -> list[dict]:
-    """Fetch from JSearch — one request to avoid rate limiting."""
-    jobs = fetch_jsearch(keywords, "Saudi Arabia")
-    logger.info(f"🔍 Total unique jobs: {len(jobs)}")
+def fetch_adzuna(keywords: str, location: str = "saudi-arabia") -> list[dict]:
+    """Adzuna API — free job search."""
+    jobs = []
+    try:
+        app_id  = os.environ.get("ADZUNA_APP_ID", "")
+        app_key = os.environ.get("ADZUNA_APP_KEY", "")
+        if not app_id or not app_key:
+            return []
+        q   = urllib.parse.quote(keywords)
+        url = (
+            f"https://api.adzuna.com/v1/api/jobs/gb/search/1"
+            f"?app_id={app_id}&app_key={app_key}"
+            f"&results_per_page=20&what={q}&where=saudi+arabia"
+            f"&content-type=application/json"
+        )
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for item in data.get("results", []):
+            title = item.get("title", "")
+            if title:
+                jobs.append({
+                    "title":    title,
+                    "company":  item.get("company", {}).get("display_name", ""),
+                    "location": item.get("location", {}).get("display_name", "السعودية"),
+                    "link":     item.get("redirect_url", ""),
+                    "desc":     item.get("description", "")[:500],
+                    "source":   "🔍 Adzuna"
+                })
+        logger.info(f"Adzuna: {len(jobs)} jobs for '{keywords}'")
+    except Exception as e:
+        logger.warning(f"Adzuna error: {e}")
     return jobs
+
+def fetch_all(keywords: str) -> list[dict]:
+    """Fetch from multiple sources."""
+    jobs = []
+
+    # JSearch
+    jsearch_jobs = fetch_jsearch(keywords, "Saudi Arabia")
+    jobs.extend(jsearch_jobs)
+
+    # Adzuna
+    adzuna_jobs = fetch_adzuna(keywords)
+    jobs.extend(adzuna_jobs)
+
+    # إزالة المكررات
+    seen = set()
+    unique = []
+    for j in jobs:
+        key = f"{j.get('title','').lower()}|{j.get('company','').lower()}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(j)
+
+    logger.info(f"🔍 Total unique jobs: {len(unique)} (JSearch:{len(jsearch_jobs)} Adzuna:{len(adzuna_jobs)})")
+    return unique
 
 # ══════════════════════════════════════════════════════
 #  AI JOB ANALYSIS
@@ -694,65 +757,19 @@ def run_job_search(chat_id: str, app, manual: bool = False):
     })
 
     if manual and found == 0:
-        # لو عنده Gmail وباقة — جرب وظيفة تجريبية بإيميل لاختبار التقديم
-        if can_apply and gmail and app_pwd:
-            test_job = {
-                "title": "Data Analyst / AI Engineer",
-                "company": "Tech Company Saudi Arabia",
-                "location": "Riyadh, Saudi Arabia",
-                "desc": "Looking for a Data Analyst with AI experience",
-                "email_apply": "careers@techcompany.sa",
-                "link": "",
-                "source": "🧪 اختبار"
-            }
-            test_analysis = {
-                "match": True,
-                "score": 8,
-                "reason": "مناسب لتخصصك في الذكاء الاصطناعي وتحليل البيانات",
-                "job_title_clean": "Data Analyst / AI Engineer",
-                "company_summary": "شركة تقنية رائدة في المملكة",
-                "requirements": ["Python", "Machine Learning", "Data Analysis", "SQL"],
-                "work_type": "حضوري",
-                "salary": "غير محدد",
-                "deadline": "غير محدد",
-                "apply_email": "careers@techcompany.sa",
-                "apply_method": "email"
-            }
-            cover = generate_cover_letter(test_job, test_analysis, profile, user_name)
-            ok = send_application_email(
-                gmail, app_pwd, "careers@techcompany.sa",
-                "Data Analyst / AI Engineer", "Tech Company Saudi Arabia",
-                cover, cv_path if cv_path and os.path.exists(cv_path) else None,
-                user_name
-            )
-            status = "✅ تم إرسال إيميل تجريبي بنجاح!" if ok else "❌ فشل إرسال الإيميل التجريبي"
-            try:
-                import asyncio
-                asyncio.run(app.bot.send_message(
-                    chat_id=int(chat_id),
-                    text=(
-                        f"🔍 *نتيجة البحث*\n\n"
-                        f"لم أجد وظائف جديدة من JSearch الآن.\n\n"
-                        f"🧪 *اختبار التقديم التلقائي:*\n"
-                        f"{status}\n\n"
-                        f"📧 راجع صندوق المرسلات في Gmail للتحقق ✅"
-                    ),
-                    parse_mode="Markdown"
-                ))
-            except: pass
-        else:
-            try:
-                import asyncio
-                asyncio.run(app.bot.send_message(
-                    chat_id=int(chat_id),
-                    text=(
-                        "🔍 *نتيجة البحث*\n\n"
-                        "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
-                        "⏰ سأبحث تلقائياً بعد 6 ساعات."
-                    ),
-                    parse_mode="Markdown"
-                ))
-            except: pass
+        try:
+            import asyncio
+            asyncio.run(app.bot.send_message(
+                chat_id=int(chat_id),
+                text=(
+                    "🔍 *نتيجة البحث*\n\n"
+                    "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
+                    "⏰ سأبحث تلقائياً بعد 6 ساعات.\n\n"
+                    "💡 يمكنك إضافة وظائف يدوياً بأمر /add"
+                ),
+                parse_mode="Markdown"
+            ))
+        except: pass
     return found
 
 # ══════════════════════════════════════════════════════
