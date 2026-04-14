@@ -1493,18 +1493,49 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Analyze match for this user أولاً — لو score < 5 نتجاهل
         result = analyze_job(job, profile) if profile else None
         if not result:
-            # Fallback — مطابقة يدوية بالكلمات المفتاحية
+            # Fallback — مطابقة يدوية شاملة لكل التخصصات
             job_text_lower = f"{job.get('title','')} {job.get('desc','')}".lower()
             user_specs_str = " ".join(user_specs).lower()
-            tech_keywords = ["ذكاء", "اصطناعي", "ai", "بيانات", "data", "برمجة", "software",
-                           "حاسب", "computer", "تقني", "مهندس", "engineer", "analyst", "محلل",
-                           "شبكات", "أمن", "security", "cloud", "سحابة", "machine", "learning"]
+
+            all_keywords = [
+                # تقنية
+                "ذكاء","اصطناعي","ai","بيانات","data","برمجة","software","حاسب","computer",
+                "تقني","مهندس","engineer","analyst","محلل","شبكات","أمن","security","cloud",
+                "سحابة","machine","learning","devops","developer","cybersecurity","blockchain",
+                # هندسة
+                "مدني","كهربائي","ميكانيكي","معماري","كيميائي","بترولي","صناعي","هندسة",
+                "civil","electrical","mechanical","architecture","chemical","petroleum",
+                # أعمال
+                "محاسب","مالي","تسويق","مبيعات","موارد","hr","لوجستيك","supply","chain",
+                "اقتصاد","مشاريع","project","manager","business","accounting","finance",
+                # صحة
+                "طب","طبيب","doctor","تمريض","nurse","صيدلة","pharmacy","علاج","therapy",
+                "مختبر","أشعة","تغذية","nutrition","صحة","health","medical","clinical",
+                # طيران
+                "طيار","pilot","طيران","aviation","مطار","airport","ملاحة","navigation",
+                # تعليم
+                "معلم","teacher","تعليم","education","مدرسة","school","تدريب","training",
+                # قانون
+                "محامي","lawyer","قانون","legal","قضاء","شريعة","compliance",
+                # إعلام
+                "صحافة","إعلام","media","تصميم","design","جرافيك","graphic","ux","ui",
+                "تصوير","photographer","محتوى","content","ترجمة","translator",
+                # علوم
+                "كيمياء","فيزياء","أحياء","biology","chemistry","physics","بحث","research",
+                # سياحة
+                "فندق","hotel","سياحة","tourism","طهي","chef","فعاليات","events",
+                # طاقة
+                "نفط","oil","gas","طاقة","energy","معادن","mining","بيئة","environment",
+                # اجتماعي
+                "اجتماعي","social","نفس","psychology","خدمة","service",
+            ]
+
             score = 0
-            for kw in tech_keywords:
+            for kw in all_keywords:
                 if kw in job_text_lower and kw in user_specs_str:
                     score += 2
-            if score >= 4:
-                result = {"match": True, "score": score, "reason": "مناسب لتخصصك"}
+            if score >= 2:
+                result = {"match": True, "score": max(score, 5), "reason": "مناسب لتخصصك"}
             else:
                 skipped += 1
                 continue
