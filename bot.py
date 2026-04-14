@@ -764,8 +764,7 @@ def run_job_search(chat_id: str, app, manual: bool = False):
                 text=(
                     "🔍 *نتيجة البحث*\n\n"
                     "بحثت في المصادر المتاحة ولم أجد وظائف جديدة مناسبة الآن.\n"
-                    "⏰ سأبحث تلقائياً بعد 6 ساعات.\n\n"
-                    "💡 يمكنك إضافة وظائف يدوياً بأمر /add"
+                    "⏰ سأبحث تلقائياً بعد 6 ساعات."
                 ),
                 parse_mode="Markdown"
             ))
@@ -1491,31 +1490,16 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         user_specs = profile.get("specializations", [])
         logger.info(f"📢 checking {uid} specs={user_specs[:2]}")
 
-        # Check if any specialization matches - more flexible
-        if target_specs:
-            # مطابقة مرنة — كلمات مشتركة
-            user_specs_str = " ".join(user_specs).lower()
-            target_str = " ".join(target_specs).lower()
-            keywords = ["ذكاء", "بيانات", "برمجة", "حاسب", "تقني", "ai", "data", "engineer", 
-                       "developer", "analyst", "software", "information", "computer", "مهندس",
-                       "محلل", "تطوير", "أمن", "شبكات", "cloud", "سحابة"]
-            match = (
-                any(s in target_specs for s in user_specs) or
-                any(k in user_specs_str and k in target_str for k in keywords) or
-                len(target_specs) == 0
-            )
-        else:
-            match = True
-
-        if not match:
+        # Analyze match for this user أولاً — لو score < 5 نتجاهل
+        result = analyze_job(job, profile) if profile else None
+        if not result:
             skipped += 1
             continue
 
-        # Analyze match for this user
-        result = analyze_job(job, profile) if profile else {"match": True, "score": 7, "reason": "إعلان مباشر من المشرف"}
-        if not result:
-            # لو ما حلل — أرسل بدون تحليل
-            result = {"match": True, "score": 7, "reason": "إعلان مناسب لتخصصك"}
+        if result.get("score", 0) < 5:
+            skipped += 1
+            logger.info(f"📢 skip {uid} — low score {result.get('score')}")
+            continue
 
         stars = "⭐" * min(int(result.get("score", 7)), 10)
         reqs  = "\n".join(f"   • {r}" for r in analysis.get("requirements", [])[:4])
