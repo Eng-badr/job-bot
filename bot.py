@@ -1493,8 +1493,21 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # Analyze match for this user أولاً — لو score < 5 نتجاهل
         result = analyze_job(job, profile) if profile else None
         if not result:
-            skipped += 1
-            continue
+            # Fallback — مطابقة يدوية بالكلمات المفتاحية
+            job_text_lower = f"{job.get('title','')} {job.get('desc','')}".lower()
+            user_specs_str = " ".join(user_specs).lower()
+            tech_keywords = ["ذكاء", "اصطناعي", "ai", "بيانات", "data", "برمجة", "software",
+                           "حاسب", "computer", "تقني", "مهندس", "engineer", "analyst", "محلل",
+                           "شبكات", "أمن", "security", "cloud", "سحابة", "machine", "learning"]
+            score = 0
+            for kw in tech_keywords:
+                if kw in job_text_lower and kw in user_specs_str:
+                    score += 2
+            if score >= 4:
+                result = {"match": True, "score": score, "reason": "مناسب لتخصصك"}
+            else:
+                skipped += 1
+                continue
 
         if result.get("score", 0) < 5:
             skipped += 1
