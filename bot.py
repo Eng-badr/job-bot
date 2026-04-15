@@ -435,7 +435,124 @@ def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
         logger.warning(f"JSearch error: {e}")
     return jobs
 
-def fetch_adzuna(keywords: str, location: str = "saudi-arabia") -> list[dict]:
+def save_job_to_store(job: dict, analysis: dict):
+    """حفظ الوظيفة في مخزن مركزي."""
+    data = load_data()
+    if "_jobs_store" not in data:
+        data["_jobs_store"] = []
+    job_entry = {
+        "id":        f"{job.get('title','').lower()[:30]}|{job.get('company','').lower()[:20]}",
+        "title":     job.get("title",""),
+        "company":   job.get("company",""),
+        "location":  job.get("location",""),
+        "desc":      job.get("desc",""),
+        "source":    job.get("source",""),
+        "link":      job.get("link",""),
+        "email":     job.get("email_apply",""),
+        "apply_target": analysis.get("apply_target",""),
+        "saved_at":  datetime.now().isoformat(),
+        "specializations": analysis.get("specializations",[]),
+    }
+    # تجنب التكرار
+    existing_ids = {j.get("id") for j in data["_jobs_store"]}
+    if job_entry["id"] not in existing_ids:
+        data["_jobs_store"].append(job_entry)
+        # نحتفظ بآخر 200 وظيفة فقط
+        data["_jobs_store"] = data["_jobs_store"][-200:]
+        save_data(data)
+
+def send_saved_jobs_to_user(chat_id: str, profile: dict, app):
+    """إرسال الوظائف المحفوظة المناسبة لمستخدم جديد."""
+    import asyncio
+    time.sleep(3)  # انتظر قليلاً بعد إنشاء الملف
+    data = load_data()
+    jobs_store = data.get("_jobs_store", [])
+    if not jobs_store:
+        return
+
+    user_specs = profile.get("specializations", [])
+    user_specs_str = " ".join(user_specs).lower()
+    sent = 0
+
+    for job in jobs_store[-50:]:  # آخر 50 وظيفة
+        # تحقق من المطابقة
+        job_text = f"{job.get('title','')} {job.get('desc','')}".lower()
+        job_specs = job.get("specializations", [])
+
+        match = any(s in job_specs for s in user_specs)
+        if not match:
+            # مطابقة بالكلمات
+            for kw in user_specs_str.split():
+                if len(kw) > 3 and kw in job_text:
+                    match = True
+                    break
+
+        if not match:
+            continue
+
+        apply_target = job.get("apply_target","") or job.get("email","") or job.get("link","")
+        apply_line = ""
+        if "@" in apply_target:
+            apply_line = f"\n📧 *للتقديم:* `{apply_target}`"
+        elif "http" in apply_target:
+            apply_line = f"\n🔗 *للتقديم:* [اضغط هنا]({apply_target})"
+
+        msg = (
+            f"📢 *وظيفة مناسبة لملفك!*\n"
+            f"{'━'*26}\n"
+            f"💼 *{job['title']}*\n"
+            f"🏢 {job.get('company','')}  |  📍 {job.get('location','')}\n"
+            f"{'━'*26}"
+            f"{apply_line}"
+        )
+        try:
+            asyncio.run(app.bot.send_message(
+                chat_id=int(chat_id), text=msg,
+                parse_mode="Markdown", disable_web_page_preview=False
+            ))
+            sent += 1
+            if sent >= 5:  # أقصى 5 وظائف للمستخدم الجديد
+                break
+        except Exception as e:
+            logger.error(f"Saved jobs send error: {e}")
+
+    if sent > 0:
+        logger.info(f"📦 Sent {sent} saved jobs to new user {chat_id}")
+
+def fetch_rss_linkedin(keywords: str) -> list[dict]:
+    """LinkedIn Jobs RSS."""
+    jobs = []
+    try:
+        q   = urllib.parse.quote(keywords)
+        url = f"https://www.linkedin.com/jobs/search/?keywords={q}&location=Saudi+Arabia&f_TPR=r604800&count=20"
+        # LinkedIn ما يدعم RSS مباشرة — نستخدم RSS proxy
+        rss_url = f"https://fetchrss.com/rss/linkedin-jobs-{q}.xml"
+        jobs = fetch_rss(rss_url, "💼 LinkedIn")
+    except Exception as e:
+        logger.warning(f"LinkedIn RSS: {e}")
+    return jobs
+
+def fetch_bayt(keywords: str) -> list[dict]:
+    """Bayt.com RSS."""
+    try:
+        q = urllib.parse.quote(keywords)
+        return fetch_rss(
+            f"https://www.bayt.com/en/saudi-arabia/jobs/{q}-jobs/?jobsrss=1",
+            "🌟 Bayt"
+        )
+    except:
+        return []
+
+def fetch_tanqeeb(keywords: str) -> list[dict]:
+    """Tanqeeb RSS."""
+    try:
+        q = urllib.parse.quote(keywords)
+        return fetch_rss(
+            f"https://sa.tanqeeb.com/jobs/search?q={q}&rss=1",
+            "🇸🇦 Tanqeeb"
+        )
+    except:
+        return []
     """Adzuna API — free job search."""
     jobs = []
     try:
@@ -473,7 +590,7 @@ def fetch_all(keywords: str) -> list[dict]:
     """Fetch from multiple sources."""
     jobs = []
 
-    # JSearch
+    # JSearch (LinkedIn, Indeed, Glassdoor)
     jsearch_jobs = fetch_jsearch(keywords, "Saudi Arabia")
     jobs.extend(jsearch_jobs)
 
@@ -481,16 +598,24 @@ def fetch_all(keywords: str) -> list[dict]:
     adzuna_jobs = fetch_adzuna(keywords)
     jobs.extend(adzuna_jobs)
 
+    # Bayt
+    bayt_jobs = fetch_bayt(keywords)
+    jobs.extend(bayt_jobs)
+
+    # Tanqeeb
+    tanqeeb_jobs = fetch_tanqeeb(keywords)
+    jobs.extend(tanqeeb_jobs)
+
     # إزالة المكررات
     seen = set()
     unique = []
     for j in jobs:
-        key = f"{j.get('title','').lower()}|{j.get('company','').lower()}"
+        key = f"{j.get('title','').lower()[:30]}|{j.get('company','').lower()[:20]}"
         if key not in seen:
             seen.add(key)
             unique.append(j)
 
-    logger.info(f"🔍 Total unique jobs: {len(unique)} (JSearch:{len(jsearch_jobs)} Adzuna:{len(adzuna_jobs)})")
+    logger.info(f"🔍 Total: {len(unique)} (JSearch:{len(jsearch_jobs)} Adzuna:{len(adzuna_jobs)} Bayt:{len(bayt_jobs)} Tanqeeb:{len(tanqeeb_jobs)})")
     return unique
 
 # ══════════════════════════════════════════════════════
@@ -1158,7 +1283,7 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "profile":          profile,
             "plan":             get_user(chat_id).get("plan", "free"),
             "applied_count":    0,
-            "last_job_search":  time.time(),  # يبدأ العداد من الآن
+            "last_job_search":  time.time(),
         })
         specs_text  = "\n".join(f"   • {s}" for s in profile["specializations"])
         cities_text = "، ".join(profile["cities"])
@@ -1176,6 +1301,13 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"💡 *الخطوة التالية:* ارفع CV لتفعيل التقديم التلقائي",
             reply_markup=main_kb(True), parse_mode="Markdown"
         )
+
+        # ── إرسال الوظائف المحفوظة المناسبة للمستخدم الجديد ──
+        threading.Thread(
+            target=send_saved_jobs_to_user,
+            args=(chat_id, profile, ctx.application),
+            daemon=True
+        ).start()
 
     # ── Plans ────────────────────────────────────────
     elif data == "show_plans":
@@ -1500,6 +1632,9 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # تحديث apply_target في analysis
     analysis["apply_target"] = apply_target
+
+    # ── حفظ الوظيفة للمستخدمين الجدد ──
+    save_job_to_store(job, analysis)
 
     target_specs = analysis.get("specializations", [])
 
