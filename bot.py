@@ -1744,16 +1744,24 @@ async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if "@" in email_target and "noreply" not in email_target.lower():
                 user_plan = PLANS.get(info.get("plan","free"), PLANS["free"])
                 u_gmail   = info.get("gmail","")
-                u_pwd     = info.get("app_password","")
                 u_applied = info.get("applied_count", 0)
                 u_cvpath  = info.get("cv_path","")
                 u_name    = info.get("name","المتقدم")
 
-                if (user_plan["auto_apply"] and u_gmail and u_pwd and
+                if (user_plan["auto_apply"] and u_gmail and
                         u_applied < user_plan.get("max_jobs", 0)):
                     cover = generate_cover_letter(job, result, profile, u_name)
+                    if not cover:
+                        # خطاب افتراضي لو فشل الـ AI
+                        specs = ", ".join(profile.get("specializations",[]))
+                        cover = (
+                            f"السادة المحترمين،\n\n"
+                            f"أتقدم لشغل وظيفة {job.get('title','')} في {job.get('company','')}، "
+                            f"وأرى أن خبرتي في {specs} تتوافق مع متطلبات الوظيفة.\n\n"
+                            f"أتطلع للتواصل معكم.\n\nمع التقدير،\n{u_name}"
+                        )
                     ok = send_application_email(
-                        u_gmail, u_pwd, email_target,
+                        u_gmail, "sendgrid", email_target,
                         job["title"], job["company"], cover,
                         u_cvpath if u_cvpath and os.path.exists(u_cvpath) else None,
                         u_name
