@@ -2254,6 +2254,61 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
+async def users_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Admin only — list all users with details."""
+    chat_id = str(update.effective_chat.id)
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ للمشرفين فقط.")
+        return
+
+    data  = load_data()
+    users = {k: v for k, v in data.items()
+             if isinstance(v, dict) and k not in ("_sub_admins", "pending_activations")}
+
+    if not users:
+        await update.message.reply_text("لا يوجد مستخدمون بعد.")
+        return
+
+    # إرسال كل مستخدم في رسالة منفصلة لو كثار
+    msg_lines = [f"👥 *المستخدمون ({len(users)}):*\n{'━'*28}"]
+
+    for uid, info in users.items():
+        name     = info.get("name", "—")
+        plan     = PLANS.get(info.get("plan","free"), PLANS["free"])["name"]
+        gmail    = info.get("gmail", "—")
+        specs    = ", ".join(info.get("profile", {}).get("specializations", []))[:40] or "—"
+        applied  = info.get("applied_count", 0)
+        has_cv   = "✅" if info.get("cv_path") else "❌"
+        joined   = info.get("created_at", "")[:10] if info.get("created_at") else "—"
+
+        msg_lines.append(
+            f"\n👤 *{name}*\n"
+            f"🆔 `{uid}`\n"
+            f"📧 {gmail}\n"
+            f"💎 {plan}\n"
+            f"💼 {specs}\n"
+            f"📎 CV: {has_cv} | 🚀 تقديمات: {applied}\n"
+            f"📅 انضم: {joined}\n"
+            f"{'─'*28}"
+        )
+
+    full_msg = "\n".join(msg_lines)
+
+    # لو الرسالة طويلة نقسمها
+    if len(full_msg) > 4000:
+        chunks = [msg_lines[0]]
+        current = msg_lines[0]
+        for line in msg_lines[1:]:
+            if len(current) + len(line) > 3800:
+                await update.message.reply_text(current, parse_mode="Markdown")
+                current = line
+            else:
+                current += "\n" + line
+        if current:
+            await update.message.reply_text(current, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(full_msg, parse_mode="Markdown")
+
 async def addadmin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Main admin only — add a sub-admin."""
     chat_id  = str(update.effective_chat.id)
@@ -2336,6 +2391,7 @@ def main():
     app.add_handler(CommandHandler("cv",          cv_cmd))
     app.add_handler(CommandHandler("activate",    activate_cmd))
     app.add_handler(CommandHandler("admin",       admin_cmd))
+    app.add_handler(CommandHandler("users",       users_cmd))
     app.add_handler(CommandHandler("addadmin",    addadmin_cmd))
     app.add_handler(CommandHandler("removeadmin", removeadmin_cmd))
     app.add_handler(CommandHandler("listadmins",  listadmins_cmd))
