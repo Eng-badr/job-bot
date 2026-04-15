@@ -299,6 +299,37 @@ def update_user(chat_id: str, fields: dict):
     save_data(data)
 
 # ══════════════════════════════════════════════════════
+#  ADMIN MANAGEMENT
+# ══════════════════════════════════════════════════════
+def get_admins() -> list:
+    """Returns list of admin chat IDs (main admin + sub-admins)."""
+    main_admin = os.environ.get("ADMIN_CHAT_ID", "")
+    data = load_data()
+    sub_admins = data.get("_sub_admins", [])
+    admins = [main_admin] if main_admin else []
+    admins.extend([str(a) for a in sub_admins])
+    return admins
+
+def is_admin(chat_id: str) -> bool:
+    return str(chat_id) in get_admins()
+
+def add_sub_admin(chat_id: str):
+    data = load_data()
+    admins = data.get("_sub_admins", [])
+    if chat_id not in admins:
+        admins.append(chat_id)
+    data["_sub_admins"] = admins
+    save_data(data)
+
+def remove_sub_admin(chat_id: str):
+    data = load_data()
+    admins = data.get("_sub_admins", [])
+    if chat_id in admins:
+        admins.remove(chat_id)
+    data["_sub_admins"] = admins
+    save_data(data)
+
+# ══════════════════════════════════════════════════════
 #  AI CLIENT
 # ══════════════════════════════════════════════════════
 ai = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -1373,13 +1404,11 @@ async def myid_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def add_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Admin only — add a job posting to broadcast to matching users."""
-    admin_id = os.environ.get("ADMIN_CHAT_ID", "")
-    chat_id  = str(update.effective_chat.id)
+    """Admin/sub-admin only — add a job posting to broadcast to matching users."""
+    chat_id = str(update.effective_chat.id)
 
-    # Check admin
-    if not admin_id or chat_id != admin_id:
-        await update.message.reply_text("⛔ هذا الأمر للمشرف فقط.")
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ هذا الأمر للمشرفين فقط.")
         return
 
     # Get job text (everything after /add)
@@ -2041,11 +2070,10 @@ async def cv_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 async def activate_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Admin: manually activate a plan."""
-    admin_id = os.environ.get("ADMIN_CHAT_ID", "")
-    chat_id  = str(update.effective_chat.id)
-    if chat_id != admin_id:
-        await update.message.reply_text("⛔ للمشرف فقط.")
+    """Admin/sub-admin: manually activate a plan."""
+    chat_id = str(update.effective_chat.id)
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ للمشرفين فقط.")
         return
 
     args = ctx.args
@@ -2226,15 +2254,91 @@ async def admin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
+async def addadmin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Main admin only — add a sub-admin."""
+    chat_id  = str(update.effective_chat.id)
+    main_admin = os.environ.get("ADMIN_CHAT_ID", "")
+    if chat_id != main_admin:
+        await update.message.reply_text("⛔ هذا الأمر للمشرف الرئيسي فقط.")
+        return
+    if not ctx.args:
+        await update.message.reply_text(
+            "الاستخدام:\n`/addadmin CHAT_ID`\n\nمثال:\n`/addadmin 123456789`",
+            parse_mode="Markdown"
+        )
+        return
+    new_admin = ctx.args[0]
+    add_sub_admin(new_admin)
+    await update.message.reply_text(
+        f"✅ *تم إضافة المشرف!*\n🆔 `{new_admin}`\n\n"
+        f"صلاحياته: إضافة وظائف وتفعيل باقات",
+        parse_mode="Markdown"
+    )
+    try:
+        await ctx.bot.send_message(
+            chat_id=int(new_admin),
+            text=(
+                "🎉 *تمت ترقيتك إلى مشرف في فرصة AI!*\n\n"
+                "صلاحياتك:\n"
+                "📢 `/add` — إضافة وظيفة وإرسالها للمستخدمين\n"
+                "✅ `/activate CHAT_ID plan` — تفعيل باقة لمستخدم"
+            ),
+            parse_mode="Markdown"
+        )
+    except: pass
+
+async def removeadmin_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Main admin only — remove a sub-admin."""
+    chat_id    = str(update.effective_chat.id)
+    main_admin = os.environ.get("ADMIN_CHAT_ID", "")
+    if chat_id != main_admin:
+        await update.message.reply_text("⛔ هذا الأمر للمشرف الرئيسي فقط.")
+        return
+    if not ctx.args:
+        await update.message.reply_text(
+            "الاستخدام:\n`/removeadmin CHAT_ID`",
+            parse_mode="Markdown"
+        )
+        return
+    target = ctx.args[0]
+    remove_sub_admin(target)
+    await update.message.reply_text(
+        f"✅ تم إزالة المشرف `{target}`",
+        parse_mode="Markdown"
+    )
+
+async def listadmins_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show all admins."""
+    chat_id = str(update.effective_chat.id)
+    if not is_admin(chat_id):
+        await update.message.reply_text("⛔ للمشرفين فقط.")
+        return
+    admins = get_admins()
+    main_admin = os.environ.get("ADMIN_CHAT_ID", "")
+    lines = []
+    for a in admins:
+        role = "👑 رئيسي" if a == main_admin else "🔑 مشرف"
+        lines.append(f"{role}: `{a}`")
+    await update.message.reply_text(
+        f"*قائمة المشرفين:*\n\n" + "\n".join(lines),
+        parse_mode="Markdown"
+    )
+
 # ══════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start",    start))
-    app.add_handler(CommandHandler("search",   search_cmd))
-    app.add_handler(CommandHandler("myid",     myid_cmd))
-    app.add_handler(CommandHandler("add",      add_cmd))
+    app.add_handler(CommandHandler("start",       start))
+    app.add_handler(CommandHandler("search",      search_cmd))
+    app.add_handler(CommandHandler("myid",        myid_cmd))
+    app.add_handler(CommandHandler("add",         add_cmd))
+    app.add_handler(CommandHandler("cv",          cv_cmd))
+    app.add_handler(CommandHandler("activate",    activate_cmd))
+    app.add_handler(CommandHandler("admin",       admin_cmd))
+    app.add_handler(CommandHandler("addadmin",    addadmin_cmd))
+    app.add_handler(CommandHandler("removeadmin", removeadmin_cmd))
+    app.add_handler(CommandHandler("listadmins",  listadmins_cmd))
     app.add_handler(CommandHandler("cv",       cv_cmd))
     app.add_handler(CommandHandler("activate", activate_cmd))
     app.add_handler(CommandHandler("admin",    admin_cmd))
