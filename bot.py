@@ -412,8 +412,8 @@ def fetch_jsearch(keywords: str, location: str = "Saudi Arabia") -> list[dict]:
                 break
             except Exception as e:
                 if "429" in str(e) and attempt < 2:
-                    logger.warning(f"JSearch 429 — waiting 10s before retry {attempt+1}")
-                    time.sleep(10)
+                    logger.warning(f"JSearch 429 — waiting 2s before retry {attempt+1}")
+                    time.sleep(2)
                 else:
                     raise e
 
@@ -624,8 +624,11 @@ def fetch_all(keywords: str) -> list[dict]:
     """Fetch from multiple sources."""
     jobs = []
 
-    # JSearch (LinkedIn, Indeed, Glassdoor)
-    jsearch_jobs = fetch_jsearch(keywords, "Saudi Arabia")
+    # JSearch (LinkedIn, Indeed, Glassdoor) — لو 429 نتخطاه فوراً
+    try:
+        jsearch_jobs = fetch_jsearch(keywords, "Saudi Arabia")
+    except Exception:
+        jsearch_jobs = []
     jobs.extend(jsearch_jobs)
 
     # Adzuna
