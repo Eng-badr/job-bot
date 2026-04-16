@@ -532,44 +532,76 @@ def fetch_rss_linkedin(keywords: str) -> list[dict]:
         logger.warning(f"LinkedIn RSS: {e}")
     return jobs
 
-def fetch_adzuna(keywords: str, location: str = "saudi-arabia") -> list[dict]:
-    """Adzuna API — free job search."""
+def fetch_adzuna(keywords: str) -> list[dict]:
+    """Adzuna API — searches UAE/Saudi jobs."""
     jobs = []
     try:
         app_id  = os.environ.get("ADZUNA_APP_ID", "")
         app_key = os.environ.get("ADZUNA_APP_KEY", "")
         if not app_id or not app_key:
             return []
-        q   = urllib.parse.quote(keywords)
-        url = (
-            f"https://api.adzuna.com/v1/api/jobs/gb/search/1"
-            f"?app_id={app_id}&app_key={app_key}"
-            f"&results_per_page=20&what={q}&where=saudi+arabia"
-            f"&content-type=application/json"
-        )
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        for item in data.get("results", []):
-            title = item.get("title", "")
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  item.get("company", {}).get("display_name", ""),
-                    "location": item.get("location", {}).get("display_name", "السعودية"),
-                    "link":     item.get("redirect_url", ""),
-                    "desc":     item.get("description", "")[:500],
-                    "source":   "🔍 Adzuna"
-                })
-        logger.info(f"Adzuna: {len(jobs)} jobs for '{keywords}'")
+        q = urllib.parse.quote(keywords)
+        # نجرب UAE أولاً لأن Adzuna عنده تغطية أحسن للخليج
+        for country in ["ae", "gb"]:
+            try:
+                url = (
+                    f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+                    f"?app_id={app_id}&app_key={app_key}"
+                    f"&results_per_page=10&what={q}"
+                    f"&content-type=application/json"
+                )
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                for item in data.get("results", []):
+                    title = item.get("title", "")
+                    if title:
+                        jobs.append({
+                            "title":    title,
+                            "company":  item.get("company", {}).get("display_name", ""),
+                            "location": item.get("location", {}).get("display_name", ""),
+                            "link":     item.get("redirect_url", ""),
+                            "desc":     item.get("description", "")[:500],
+                            "source":   "🔍 Adzuna"
+                        })
+                if jobs:
+                    break
+            except Exception as e:
+                logger.warning(f"Adzuna {country}: {e}")
+        logger.info(f"Adzuna: {len(jobs)} jobs")
     except Exception as e:
         logger.warning(f"Adzuna error: {e}")
     return jobs
 
-def fetch_bayt(keywords: str) -> list[dict]:
-    """Bayt.com RSS."""
+def fetch_remotive(keywords: str) -> list[dict]:
+    """Remotive API — free remote jobs."""
+    jobs = []
     try:
-        q = urllib.parse.quote(keywords)
+        q   = urllib.parse.quote(keywords)
+        url = f"https://remotive.com/api/remote-jobs?search={q}&limit=20"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for item in data.get("jobs", []):
+            title = item.get("title", "")
+            if title:
+                jobs.append({
+                    "title":    title,
+                    "company":  item.get("company_name", ""),
+                    "location": item.get("candidate_required_location", "عن بعد"),
+                    "link":     item.get("url", ""),
+                    "desc":     item.get("description", "")[:300],
+                    "source":   "🌐 Remotive"
+                })
+        logger.info(f"Remotive: {len(jobs)} jobs")
+    except Exception as e:
+        logger.warning(f"Remotive error: {e}")
+    return jobs
+
+def fetch_bayt(keywords: str) -> list[dict]:
+    """Bayt.com — محاولة RSS."""
+    try:
+        q = urllib.parse.quote(keywords.split()[0])  # كلمة واحدة فقط
         return fetch_rss(
             f"https://www.bayt.com/en/saudi-arabia/jobs/{q}-jobs/?jobsrss=1",
             "🌟 Bayt"
@@ -578,53 +610,21 @@ def fetch_bayt(keywords: str) -> list[dict]:
         return []
 
 def fetch_tanqeeb(keywords: str) -> list[dict]:
-    """Tanqeeb RSS."""
+    """Tanqeeb — محاولة RSS."""
     try:
-        q = urllib.parse.quote(keywords)
+        q = urllib.parse.quote(keywords.split()[0])
         return fetch_rss(
-            f"https://sa.tanqeeb.com/jobs/search?q={q}&rss=1",
+            f"https://tanqeeb.com/jobs?q={q}&l=saudi-arabia&format=rss",
             "🇸🇦 Tanqeeb"
         )
     except:
         return []
-    """Adzuna API — free job search."""
-    jobs = []
-    try:
-        app_id  = os.environ.get("ADZUNA_APP_ID", "")
-        app_key = os.environ.get("ADZUNA_APP_KEY", "")
-        if not app_id or not app_key:
-            return []
-        q   = urllib.parse.quote(keywords)
-        url = (
-            f"https://api.adzuna.com/v1/api/jobs/gb/search/1"
-            f"?app_id={app_id}&app_key={app_key}"
-            f"&results_per_page=20&what={q}&where=saudi+arabia"
-            f"&content-type=application/json"
-        )
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        for item in data.get("results", []):
-            title = item.get("title", "")
-            if title:
-                jobs.append({
-                    "title":    title,
-                    "company":  item.get("company", {}).get("display_name", ""),
-                    "location": item.get("location", {}).get("display_name", "السعودية"),
-                    "link":     item.get("redirect_url", ""),
-                    "desc":     item.get("description", "")[:500],
-                    "source":   "🔍 Adzuna"
-                })
-        logger.info(f"Adzuna: {len(jobs)} jobs for '{keywords}'")
-    except Exception as e:
-        logger.warning(f"Adzuna error: {e}")
-    return jobs
 
 def fetch_all(keywords: str) -> list[dict]:
     """Fetch from multiple sources."""
     jobs = []
 
-    # JSearch (LinkedIn, Indeed, Glassdoor) — لو 429 نتخطاه فوراً
+    # JSearch — لو 429 نتخطاه فوراً
     try:
         jsearch_jobs = fetch_jsearch(keywords, "Saudi Arabia")
     except Exception:
@@ -634,6 +634,10 @@ def fetch_all(keywords: str) -> list[dict]:
     # Adzuna
     adzuna_jobs = fetch_adzuna(keywords)
     jobs.extend(adzuna_jobs)
+
+    # Remotive (وظائف عن بعد مجانية)
+    remotive_jobs = fetch_remotive(keywords)
+    jobs.extend(remotive_jobs)
 
     # Bayt
     bayt_jobs = fetch_bayt(keywords)
@@ -652,7 +656,7 @@ def fetch_all(keywords: str) -> list[dict]:
             seen.add(key)
             unique.append(j)
 
-    logger.info(f"🔍 Total: {len(unique)} (JSearch:{len(jsearch_jobs)} Adzuna:{len(adzuna_jobs)} Bayt:{len(bayt_jobs)} Tanqeeb:{len(tanqeeb_jobs)})")
+    logger.info(f"🔍 Total: {len(unique)} (JSearch:{len(jsearch_jobs)} Adzuna:{len(adzuna_jobs)} Remotive:{len(remotive_jobs)} Bayt:{len(bayt_jobs)} Tanqeeb:{len(tanqeeb_jobs)})")
     return unique
 
 # ══════════════════════════════════════════════════════
