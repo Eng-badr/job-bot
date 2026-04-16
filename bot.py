@@ -913,19 +913,23 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 
         analysis = analyze_job(job, profile)
         if not analysis:
-            # Fallback — مطابقة بسيطة بدون AI
+            # Fallback — مطابقة شاملة لكل التخصصات بدون AI
             job_text_lower = f"{job.get('title','')} {job.get('desc','')}".lower()
-            user_specs_str = " ".join(specs).lower()
-            matched = any(
-                kw in job_text_lower and kw in user_specs_str
-                for kw in ["ذكاء","اصطناعي","ai","بيانات","data","برمجة","software",
-                           "حاسب","computer","تقني","engineer","analyst","محلل",
-                           "طب","doctor","محاسب","تسويق","مبيعات","هندسة","تعليم",
-                           "مشاريع","project","تصميم","design","شبكات","أمن"]
-                if len(kw) > 2
-            )
+
+            matched = False
+            for spec in specs:
+                # كلمات التخصص من القاموس
+                spec_kws = SPEC_KEYWORDS.get(spec, spec).lower().split()
+                for kw in spec_kws:
+                    if len(kw) > 2 and kw in job_text_lower:
+                        matched = True
+                        break
+                if matched:
+                    break
+
             if not matched:
                 continue
+
             analysis = {
                 "match": True,
                 "score": 6,
