@@ -506,10 +506,14 @@ def send_saved_jobs_to_user(chat_id: str, profile: dict, app):
             f"{apply_line}"
         )
         try:
-            asyncio.run(app.bot.send_message(
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(
+                app.bot.send_message(
                 chat_id=int(chat_id), text=msg,
                 parse_mode="Markdown", disable_web_page_preview=False
-            ))
+            )
+            )
+            loop.close()
             sent += 1
             if sent >= 5:  # أقصى 5 وظائف للمستخدم الجديد
                 break
@@ -961,13 +965,13 @@ def run_job_search(chat_id: str, app, manual: bool = False):
                 )
 
         try:
-            import asyncio
-            # Add header to distinguish found vs applied
+            loop = asyncio.new_event_loop()
             header = "✅ *وظيفة جديدة مناسبة لك!*\n" if not auto_applied else "🚀 *وظيفة قدّمنا عليها عنك!*\n"
-            asyncio.run(app.bot.send_message(
+            loop.run_until_complete(app.bot.send_message(
                 chat_id=int(chat_id), text=header + card,
                 parse_mode="Markdown", disable_web_page_preview=False
             ))
+            loop.close()
             found += 1
         except Exception as e:
             logger.error(f"Send error: {e}")
@@ -981,7 +985,9 @@ def run_job_search(chat_id: str, app, manual: bool = False):
     if manual and found == 0:
         try:
             import asyncio
-            asyncio.run(app.bot.send_message(
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(
+                app.bot.send_message(
                 chat_id=int(chat_id),
                 text=(
                     "🔍 *نتيجة البحث*\n\n"
@@ -989,7 +995,9 @@ def run_job_search(chat_id: str, app, manual: bool = False):
                     "⏰ سأبحث تلقائياً بعد 6 ساعات."
                 ),
                 parse_mode="Markdown"
-            ))
+            )
+            )
+            loop.close()
         except: pass
     return found
 
@@ -1010,20 +1018,28 @@ def job_search_loop(app):
             if time.time() - last >= JOB_SEARCH_INTERVAL:
                 logger.info(f"⏰ Auto search: {cid}")
                 try:
-                    asyncio.run(app.bot.send_message(
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(
+                        app.bot.send_message(
                         chat_id=int(cid),
                         text="🔍 *جاري البحث عن وظائف جديدة...*\nسأرسل لك المناسب فور العثور عليه!",
                         parse_mode="Markdown"
-                    ))
+                    )
+                    )
+                    loop.close()
                 except: pass
                 found = run_job_search(cid, app)
                 try:
                     if found == 0:
-                        asyncio.run(app.bot.send_message(
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(
+                            app.bot.send_message(
                             chat_id=int(cid),
                             text="🔍 *انتهى البحث*\n\nلم أجد وظائف جديدة مناسبة هذه المرة.\n⏰ سأبحث مجدداً بعد 6 ساعات.",
                             parse_mode="Markdown"
-                        ))
+                        )
+                        )
+                        loop.close()
                 except: pass
         time.sleep(1800)
 
@@ -1048,7 +1064,9 @@ def email_monitor_loop(app):
                     if result and result.get("is_job") and result.get("score", 0) >= 6:
                         stars = "⭐" * min(int(result.get("score", 0)), 10)
                         import asyncio
-                        asyncio.run(app.bot.send_message(
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(
+                            app.bot.send_message(
                             chat_id=int(cid),
                             text=(
                                 f"📬 *إيميل وظيفة جديد!*\n\n"
@@ -1058,7 +1076,9 @@ def email_monitor_loop(app):
                                 f"📊 {stars} ({result['score']}/10)"
                             ),
                             parse_mode="Markdown"
-                        ))
+                        )
+                        )
+                        loop.close()
                     if em["uid"]:
                         uid_i = int(em["uid"])
                         if not info.get("last_uid") or uid_i > int(info.get("last_uid", 0)):
