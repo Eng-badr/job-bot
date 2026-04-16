@@ -532,6 +532,40 @@ def fetch_rss_linkedin(keywords: str) -> list[dict]:
         logger.warning(f"LinkedIn RSS: {e}")
     return jobs
 
+def fetch_adzuna(keywords: str, location: str = "saudi-arabia") -> list[dict]:
+    """Adzuna API — free job search."""
+    jobs = []
+    try:
+        app_id  = os.environ.get("ADZUNA_APP_ID", "")
+        app_key = os.environ.get("ADZUNA_APP_KEY", "")
+        if not app_id or not app_key:
+            return []
+        q   = urllib.parse.quote(keywords)
+        url = (
+            f"https://api.adzuna.com/v1/api/jobs/gb/search/1"
+            f"?app_id={app_id}&app_key={app_key}"
+            f"&results_per_page=20&what={q}&where=saudi+arabia"
+            f"&content-type=application/json"
+        )
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        for item in data.get("results", []):
+            title = item.get("title", "")
+            if title:
+                jobs.append({
+                    "title":    title,
+                    "company":  item.get("company", {}).get("display_name", ""),
+                    "location": item.get("location", {}).get("display_name", "السعودية"),
+                    "link":     item.get("redirect_url", ""),
+                    "desc":     item.get("description", "")[:500],
+                    "source":   "🔍 Adzuna"
+                })
+        logger.info(f"Adzuna: {len(jobs)} jobs for '{keywords}'")
+    except Exception as e:
+        logger.warning(f"Adzuna error: {e}")
+    return jobs
+
 def fetch_bayt(keywords: str) -> list[dict]:
     """Bayt.com RSS."""
     try:
