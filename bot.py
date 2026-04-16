@@ -909,7 +909,32 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 
         analysis = analyze_job(job, profile)
         if not analysis:
-            continue
+            # Fallback — مطابقة بسيطة بدون AI
+            job_text_lower = f"{job.get('title','')} {job.get('desc','')}".lower()
+            user_specs_str = " ".join(specs).lower()
+            matched = any(
+                kw in job_text_lower and kw in user_specs_str
+                for kw in ["ذكاء","اصطناعي","ai","بيانات","data","برمجة","software",
+                           "حاسب","computer","تقني","engineer","analyst","محلل",
+                           "طب","doctor","محاسب","تسويق","مبيعات","هندسة","تعليم",
+                           "مشاريع","project","تصميم","design","شبكات","أمن"]
+                if len(kw) > 2
+            )
+            if not matched:
+                continue
+            analysis = {
+                "match": True,
+                "score": 6,
+                "reason": "مناسب لتخصصك",
+                "job_title_clean": job.get("title", ""),
+                "company_summary": "",
+                "requirements": [],
+                "work_type": "غير محدد",
+                "salary": "غير محدد",
+                "deadline": "غير محدد",
+                "apply_email": job.get("email_apply", ""),
+                "apply_method": "email" if job.get("email_apply") else "website"
+            }
 
         apply_method, apply_target = classify_apply_method(job, analysis)
         card = format_job_card(job, analysis, apply_method, apply_target)
