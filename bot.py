@@ -339,6 +339,7 @@ def ai_call(prompt: str, max_tokens: int = 400) -> str:
         r = ai.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=max_tokens,
+            timeout=10.0,  # 10 ثواني فقط
             messages=[{"role": "user", "content": prompt}]
         )
         return r.content[0].text.strip()
@@ -946,6 +947,7 @@ def run_job_search(chat_id: str, app, manual: bool = False):
 
         apply_method, apply_target = classify_apply_method(job, analysis)
         card = format_job_card(job, analysis, apply_method, apply_target)
+        logger.info(f"📋 Job: {job.get('title','')[:40]} | score={analysis.get('score')} | apply={apply_method} | target={apply_target[:30] if apply_target else 'none'}")
 
         # Auto-apply by email if eligible
         auto_applied = False
