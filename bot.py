@@ -2636,6 +2636,7 @@ def main():
     app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.Document.PDF, doc_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, channel_post_handler))
     threading.Thread(target=job_search_loop,    args=(app,), daemon=True).start()
     # email_monitor_loop disabled - not needed
 
