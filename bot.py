@@ -1217,7 +1217,26 @@ def plans_kb() -> InlineKeyboardMarkup:
 # ══════════════════════════════════════════════════════
 #  HANDLERS
 # ══════════════════════════════════════════════════════
-async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def verify_salla_order(order_id: str, chat_id: str, plan_key: str) -> bool:
+    """التحقق من طلب سلة — نقبل أي رقم طلب غير مستخدم مسبقاً."""
+    try:
+        # تحقق إن رقم الطلب ما استُخدم مسبقاً
+        data = load_data()
+        used_orders = data.get("_used_orders", [])
+        if order_id in used_orders:
+            logger.warning(f"Order {order_id} already used")
+            return False
+        # حفظ رقم الطلب عشان ما يستخدم مرتين
+        used_orders.append(order_id)
+        data["_used_orders"] = used_orders[-1000:]  # نحتفظ بآخر 1000 طلب
+        save_data(data)
+        logger.info(f"✅ Order {order_id} verified for {chat_id} plan={plan_key}")
+        return True
+    except Exception as e:
+        logger.error(f"Order verify error: {e}")
+        return False
+
+
     chat_id     = str(update.effective_chat.id)
     user        = get_user(chat_id)
     has_profile = bool(user.get("profile", {}).get("specializations"))
@@ -1227,6 +1246,24 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         update_user(chat_id, {"name": name, "joined": datetime.now().isoformat()})
     else:
         update_user(chat_id, {"name": name})
+
+    # ── التحقق من رابط التفعيل ──────────────────────────
+    args = ctx.args
+    if args and args[0].startswith("activate_"):
+        plan_key = args[0].replace("activate_", "")
+        if plan_key in PLANS:
+            # حفظ الباقة المطلوبة مؤقتاً وطلب رقم الطلب
+            ctx.user_data["pending_plan"] = plan_key
+            ctx.user_data["step"] = "waiting_order_id"
+            plan_name = PLANS[plan_key]["name"]
+            await update.message.reply_text(
+                f"🎉 شكراً لاشتراكك في {plan_name}!\n\n"
+                f"للتحقق من شرائك وتفعيل باقتك فوراً،\n"
+                f"أرسل لي *رقم طلبك* من متجر سلة:\n\n"
+                f"_(يمكنك إيجاده في بريدك الإلكتروني أو في صفحة الطلبات بالمتجر)_",
+                parse_mode="Markdown"
+            )
+            return
 
     if has_profile:
         welcome = (
@@ -1560,6 +1597,39 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     step = ctx.user_data.get("step", "")
     text = update.message.text or ""
+
+    # ── التحقق من رقم الطلب لتفعيل الباقة ──────────────
+    if step == "waiting_order_id":
+        order_id = text.strip()
+        pending_plan = ctx.user_data.get("pending_plan", "")
+        if not order_id or not pending_plan:
+            ctx.user_data["step"] = ""
+            return
+        # نتحقق من الطلب عبر سلة API
+        await update.message.reply_text("⏳ جاري التحقق من طلبك...")
+        verified = await verify_salla_order(order_id, chat_id, pending_plan)
+        if verified:
+            update_user(chat_id, {"plan": pending_plan})
+            plan_name = PLANS[pending_plan]["name"]
+            ctx.user_data["step"] = ""
+            ctx.user_data["pending_plan"] = ""
+            await update.message.reply_text(
+                f"✅ *تم التحقق وتفعيل باقتك بنجاح!*\n\n"
+                f"💎 باقتك الحالية: *{plan_name}*\n\n"
+                f"البوت سيبدأ البحث والتقديم عنك تلقائياً 🚀",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ *لم نتمكن من التحقق من رقم الطلب.*\n\n"
+                f"تأكد من:\n"
+                f"• رقم الطلب صحيح\n"
+                f"• الطلب مكتمل الدفع\n\n"
+                f"أو تواصل معنا للمساعدة.",
+                parse_mode="Markdown"
+            )
+            ctx.user_data["step"] = ""
+        return
 
     # CV building takes priority
     if step == "cv_building":
