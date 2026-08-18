@@ -2277,7 +2277,10 @@ async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # Check if user has CV plan or elite
     if not PLANS.get(plan, {}).get("cv", False):
-        salla_cv = os.environ.get("SALLA_LINK_CV", "https://salla.sa")
+        salla_cv = os.environ.get("SALLA_LINK_CV", "https://salla.sa/Fursa-AI")
+        if not salla_cv or salla_cv == "https://salla.sa":
+            salla_cv = "https://salla.sa/Fursa-AI"
+        activate_cv = "https://t.me/Myjob_alarm_bot?start=activate_cv"
         await q.message.reply_text(
             "📄 *خدمة إنشاء CV الذكي*\n\n"
             "✅ CV احترافي متوافق مع ATS\n"
@@ -2285,10 +2288,10 @@ async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "✅ نسخة Word قابلة للتعديل\n"
             "✅ بالعربية أو الإنجليزية\n"
             "✅ نبذة مهنية بالذكاء الاصطناعي\n\n"
-            f"💰 *السعر: 15 ريال فقط*\n\n"
-            f"👉 [اشترك الآن]({salla_cv})",
+            f"💰 *السعر: 15 ريال فقط*",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💳 اشترك — 15 ريال", url=salla_cv)],
+                [InlineKeyboardButton("✅ فعّل بعد الدفع", url=activate_cv)],
                 [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")],
             ]),
             parse_mode="Markdown"
