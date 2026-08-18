@@ -1236,7 +1236,7 @@ async def verify_salla_order(order_id: str, chat_id: str, plan_key: str) -> bool
         logger.error(f"Order verify error: {e}")
         return False
 
-
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id     = str(update.effective_chat.id)
     user        = get_user(chat_id)
     has_profile = bool(user.get("profile", {}).get("specializations"))
