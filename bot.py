@@ -1218,7 +1218,17 @@ def plans_kb() -> InlineKeyboardMarkup:
 #  HANDLERS
 # ══════════════════════════════════════════════════════
 async def verify_salla_order(order_id: str, chat_id: str, plan_key: str) -> bool:
-    """التحقق من طلب سلة — نقبل أي رقم طلب غير مستخدم مسبقاً."""
+    """التحقق من طلب سلة عبر API."""
+    import urllib.request, json
+
+    # المنتجات المرتبطة بكل باقة
+    PLAN_PRODUCTS = {
+        "basic": "2095408000",
+        "pro":   "338145427",
+        "elite": "1712119708",
+        "cv":    "230038942",
+    }
+
     try:
         # تحقق إن رقم الطلب ما استُخدم مسبقاً
         data = load_data()
@@ -1226,12 +1236,58 @@ async def verify_salla_order(order_id: str, chat_id: str, plan_key: str) -> bool
         if order_id in used_orders:
             logger.warning(f"Order {order_id} already used")
             return False
+
+        # تحقق من الطلب عبر Salla API
+        token = os.environ.get("SALLA_ACCESS_TOKEN", "")
+        if not token:
+            logger.warning("SALLA_ACCESS_TOKEN not set — skipping API check")
+            # لو ما فيه token نقبل الطلب (مؤقت)
+        else:
+            url = f"https://api.salla.dev/admin/v2/orders/{order_id}"
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json"
+                }
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    order_data = json.loads(resp.read().decode())
+
+                order = order_data.get("data", {})
+
+                # تحقق من حالة الطلب
+                status = order.get("status", {}).get("slug", "")
+                if status not in ["completed", "in_progress", "ready"]:
+                    logger.warning(f"Order {order_id} status={status} not completed")
+                    return False
+
+                # تحقق إن المنتج المشترى هو نفس الباقة
+                expected_product = PLAN_PRODUCTS.get(plan_key, "")
+                items = order.get("items", [])
+                product_ids = [str(item.get("product", {}).get("id", "")) for item in items]
+
+                if expected_product and expected_product not in product_ids:
+                    logger.warning(f"Order {order_id} products={product_ids} != expected={expected_product}")
+                    return False
+
+                logger.info(f"✅ Salla order {order_id} verified: status={status}")
+
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    logger.warning(f"Order {order_id} not found in Salla")
+                    return False
+                logger.error(f"Salla API error: {e}")
+                return False
+
         # حفظ رقم الطلب عشان ما يستخدم مرتين
         used_orders.append(order_id)
-        data["_used_orders"] = used_orders[-1000:]  # نحتفظ بآخر 1000 طلب
+        data["_used_orders"] = used_orders[-1000:]
         save_data(data)
-        logger.info(f"✅ Order {order_id} verified for {chat_id} plan={plan_key}")
+        logger.info(f"✅ Order {order_id} activated for {chat_id} plan={plan_key}")
         return True
+
     except Exception as e:
         logger.error(f"Order verify error: {e}")
         return False
@@ -1471,17 +1527,32 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("✅ أنت على الباقة المجانية.", reply_markup=main_kb(True))
         else:
             links = {
-                "basic": os.environ.get("SALLA_LINK_BASIC", "https://salla.sa"),
-                "pro":   os.environ.get("SALLA_LINK_PRO",   "https://salla.sa"),
-                "elite": os.environ.get("SALLA_LINK_ELITE", "https://salla.sa"),
+                "basic": os.environ.get("SALLA_LINK_BASIC", ""),
+                "pro":   os.environ.get("SALLA_LINK_PRO",   ""),
+                "elite": os.environ.get("SALLA_LINK_ELITE", ""),
             }
-            await q.message.reply_text(
+            link = links.get(pk, "")
+            activate_link = f"https://t.me/Myjob_alarm_bot?start=activate_{pk}"
+
+            msg = (
                 f"💳 *الاشتراك في {plan['name']}*\n\n"
-                f"السعر: *{plan['price']} ريال*\n"
-                f"المميزات: {plan['desc']}\n\n"
-                f"👉 [ادفع الآن — {plan['price']} ريال]({links.get(pk,'#')})\n\n"
-                f"✅ بعد الدفع سيتم تفعيل باقتك تلقائياً.",
-                parse_mode="Markdown"
+                f"💰 السعر: *{plan['price']} ريال*\n"
+                f"✨ المميزات: {plan['desc']}\n\n"
+                f"{'👉 [ادفع الآن](' + link + ')' if link else '👉 توجه لمتجرنا للدفع'}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"*بعد الدفع:*\n"
+                f"اضغط هنا لتفعيل باقتك فوراً 👇\n"
+                f"[تفعيل الباقة]({activate_link})"
+            )
+            keyboard = []
+            if link:
+                keyboard.append([InlineKeyboardButton(f"💳 ادفع الآن — {plan['price']} ريال", url=link)])
+            keyboard.append([InlineKeyboardButton("✅ فعّل باقتي بعد الدفع", url=activate_link)])
+
+            await q.message.reply_text(
+                msg,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
     # ── Search now ───────────────────────────────────
@@ -1664,9 +1735,9 @@ async def doc_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("⏳ جاري حفظ CV...")
     try:
-        file      = await ctx.bot.get_file(doc.file_id)
-        cv_path   = f"{CV_DIR}/cv_{chat_id}.pdf"
-        await file.download_to_drive(cv_path)
+        file    = await ctx.bot.get_file(doc.file_id, read_timeout=60, write_timeout=60)
+        cv_path = f"{CV_DIR}/cv_{chat_id}.pdf"
+        await file.download_to_drive(cv_path, read_timeout=60, write_timeout=60)
         update_user(chat_id, {"cv_path": cv_path})
         ctx.user_data["step"] = ""
         user = get_user(chat_id)
