@@ -1538,16 +1538,17 @@ async def btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"💳 *الاشتراك في {plan['name']}*\n\n"
                 f"💰 السعر: *{plan['price']} ريال*\n"
                 f"✨ المميزات: {plan['desc']}\n\n"
-                f"{'👉 [ادفع الآن](' + link + ')' if link else '👉 توجه لمتجرنا للدفع'}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"*بعد الدفع:*\n"
-                f"اضغط هنا لتفعيل باقتك فوراً 👇\n"
-                f"[تفعيل الباقة]({activate_link})"
+                f"*خطوات التفعيل:*\n"
+                f"١️⃣ اضغط 'ادفع الآن' وأكمل الدفع في سلة\n"
+                f"٢️⃣ بعد الدفع، ارجع هنا واضغط 'فعّل باقتي'\n"
+                f"٣️⃣ أدخل رقم طلبك وتفعّل باقتك فوراً ✅"
             )
             keyboard = []
             if link:
-                keyboard.append([InlineKeyboardButton(f"💳 ادفع الآن — {plan['price']} ريال", url=link)])
-            keyboard.append([InlineKeyboardButton("✅ فعّل باقتي بعد الدفع", url=activate_link)])
+                keyboard.append([InlineKeyboardButton(f"🛒 ادفع الآن — {plan['price']} ريال", url=link)])
+            keyboard.append([InlineKeyboardButton("✅ فعّلت وأريد تفعيل باقتي", url=activate_link)])
+            keyboard.append([InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")])
 
             await q.message.reply_text(
                 msg,
@@ -2286,12 +2287,16 @@ async def cv_start_btn(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "✅ CV احترافي متوافق مع ATS\n"
             "✅ نسخة PDF جاهزة للتقديم\n"
             "✅ نسخة Word قابلة للتعديل\n"
-            "✅ بالعربية أو الإنجليزية\n"
-            "✅ نبذة مهنية بالذكاء الاصطناعي\n\n"
-            f"💰 *السعر: 15 ريال فقط*",
+            "✅ بالعربية أو الإنجليزية\n\n"
+            f"💰 *السعر: 15 ريال فقط*\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"*خطوات التفعيل:*\n"
+            f"١️⃣ اضغط 'ادفع الآن' وأكمل الدفع في سلة\n"
+            f"٢️⃣ بعد الدفع، ارجع هنا واضغط 'فعّلت'\n"
+            f"٣️⃣ أدخل رقم طلبك وتفعّل فوراً ✅",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💳 اشترك — 15 ريال", url=salla_cv)],
-                [InlineKeyboardButton("✅ فعّل بعد الدفع", url=activate_cv)],
+                [InlineKeyboardButton("🛒 ادفع الآن — 15 ريال", url=salla_cv)],
+                [InlineKeyboardButton("✅ فعّلت وأريد تفعيل باقتي", url=activate_cv)],
                 [InlineKeyboardButton("⬅️ رجوع", callback_data="main_menu")],
             ]),
             parse_mode="Markdown"
